@@ -92,28 +92,13 @@ def test_mirror_image_lands_in_own_storage() -> None:
     assert get_storage().get_bytes(persisted.storage_key) is not None
 
 
-def test_mirror_failure_falls_back_to_external_url() -> None:
-    """镜像失败不应让整个任务挂掉，降级为引用外链并记录。"""
+def test_mirror_failure_raises() -> None:
+    """镜像失败直接抛错（不做外链降级，避免图片静默 404）。"""
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(404, text="link expired")
 
-    persisted = mirror_image(
-        "https://oss.example.com/gone.png", "designs", client=_client(handler)
-    )
-
-    assert persisted.storage_key == ""
-    assert persisted.image_url == "https://oss.example.com/gone.png"
-
-
-def test_mirror_failure_can_be_forced_to_raise() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, text="boom")
-
     with pytest.raises(ProviderError):
         mirror_image(
-            "https://oss.example.com/x.png",
-            "designs",
-            client=_client(handler),
-            fallback_external=False,
+            "https://oss.example.com/gone.png", "designs", client=_client(handler)
         )

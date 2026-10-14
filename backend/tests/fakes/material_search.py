@@ -1,16 +1,17 @@
-"""Mock 材质图检索：按 tag 确定性生成面料小样图。"""
+"""Fake 材质图检索：按 tag 确定性生成面料小样图（仅供测试）。"""
 
 from __future__ import annotations
 
 from urllib.parse import quote
 
 from app.abilities.base import MaterialImageResult, MaterialTagResult
-from app.abilities.mock_images import KIND_MATERIAL, make_image
 from app.taxonomy import build_material_query_zh
 
+from fakes.placeholder_images import KIND_MATERIAL, make_image
 
-class MockMaterialImageSearchProvider:
-    name = "mock"
+
+class FakeMaterialImageSearchProvider:
+    name = "fake"
 
     def search(
         self, tags: list[MaterialTagResult], per_tag: int = 3
@@ -29,7 +30,9 @@ class MockMaterialImageSearchProvider:
                 results.append(
                     MaterialImageResult(
                         tag=tag.material,
-                        similarity=round(max(0.35, 0.96 - 0.05 * j - 0.02 * tag.rank), 2),
+                        similarity=round(
+                            max(0.35, 0.96 - 0.05 * j - 0.02 * tag.rank), 2
+                        ),
                         content_type="image/png",
                         image_bytes=data,
                         source_url=(

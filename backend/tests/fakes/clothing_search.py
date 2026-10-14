@@ -1,15 +1,23 @@
-"""Mock 服装图搜索：确定性生成占位服装图，无需网络。"""
+"""Fake 服装图搜索：确定性生成占位服装图，无需网络（仅供测试）。"""
 
 from __future__ import annotations
 
 from app.abilities.base import ClothingImageResult
-from app.abilities.mock_images import KIND_CLOTHING, make_image
 
-DEFAULT_SITES = ["mock-shop", "mock-lookbook"]
+from fakes.placeholder_images import KIND_CLOTHING, make_image
+
+DEFAULT_SITES = ["fake-shop", "fake-lookbook"]
+
+#: 供 /api/search/sites 展示（生产实现同样通过 provider.sites 暴露）
+SITES = [
+    {"id": "fake-shop", "label": "Fake 商城"},
+    {"id": "fake-lookbook", "label": "Fake Lookbook"},
+]
 
 
-class MockClothingSearchProvider:
-    name = "mock"
+class FakeClothingSearchProvider:
+    name = "fake"
+    sites = SITES
 
     def search(
         self, sites: list[str], query: str, count: int
@@ -28,7 +36,7 @@ class MockClothingSearchProvider:
             )
             results.append(
                 ClothingImageResult(
-                    provider="mock",
+                    provider="fake",
                     content_type="image/png",
                     image_bytes=data,
                     page_url=f"https://example.com/{site}/look/{i + 1}",

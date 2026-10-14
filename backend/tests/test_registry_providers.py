@@ -1,7 +1,7 @@
 """按能力构造 provider 的注册表测试。
 
 核心保证：能力配置是**显式**的（无全局兜底、无留空回退、无空壳 provider）；
-只有显式选中真实 provider 的能力才会走真实实现，其余能力保持 mock。
+未选择实现的能力会得到占位实现，调用时抛 `AbilityNotConfigured`。
 """
 
 from __future__ import annotations
@@ -9,30 +9,40 @@ from __future__ import annotations
 import pytest
 
 from app.ability_config import AbilitySettings
-from app.abilities.clothing_search import (
-    MockClothingSearchProvider,
-    UnsplashClothingSearchProvider,
+from app.abilities.clothing_search import UnsplashClothingSearchProvider
+from app.abilities.design_generate import OpenAICompatibleImageGenerator
+from app.abilities.material_identify import OpenAICompatibleVLMIdentifier
+from app.abilities.material_search import UnsplashMaterialSearchProvider
+from app.abilities.registry import (
+    AbilityNotConfigured,
+    UnknownProvider,
+    build_abilities,
+    config_warnings,
 )
-from app.abilities.design_generate import (
-    MockDesignGenerator,
-    OpenAICompatibleImageGenerator,
-)
-from app.abilities.material_identify import (
-    MockMaterialIdentifier,
-    OpenAICompatibleVLMIdentifier,
-)
-from app.abilities.material_search import (
-    MockMaterialImageSearchProvider,
-    UnsplashMaterialSearchProvider,
-)
-from app.abilities.registry import UnknownProvider, build_abilities, config_warnings
 from app.config import Settings
+from fakes import (
+    FakeClothingSearchProvider,
+    FakeDesignGenerator,
+    FakeMaterialIdentifier,
+    FakeMaterialImageSearchProvider,
+)
 
 
 def _settings(**overrides) -> Settings:
     base: dict = {"database_url": "sqlite:///:memory:"}
     base.update(overrides)
     return Settings(**base)
+
+
+def _fake_all(**overrides) -> AbilitySettings:
+    base: dict = {
+        "clothing_search_provider": "fake",
+        "material_search_provider": "fake",
+        "material_identifier_provider": "fake",
+        "design_generator_provider": "fake",
+    }
+    base.update(overrides)
+    return AbilitySettings(**base)
 
 
 def _identifier(**overrides) -> AbilitySettings:
@@ -75,57 +85,58 @@ def _unsplash_material(**overrides) -> AbilitySettings:
     return AbilitySettings(**base)
 
 
-def test_all_mock_by_default() -> None:
+def test_fake_providers_are_built_when_selected() -> None:
+    abilities = build_abilities(_fake_all(), _settings())
+
+    assert set(abilities.providers.values()) == {"fake"}
+    assert isinstance(abilities.clothing_search, FakeClothingSearchProvider)
+    assert isinstance(abilities.material_identifier, FakeMaterialIdentifier)
+    assert isinstance(abilities.material_search, FakeMaterialImageSearchProvider)
+    assert isinstance(abilities.design_generator, FakeDesignGenerator)
+
+
+def test_unconfigured_ability_raises_clear_error() -> None:
     abilities = build_abilities(AbilitySettings(), _settings())
 
-    assert abilities.mode == "mock"
-    assert set(abilities.providers.values()) == {"mock"}
-    assert isinstance(abilities.clothing_search, MockClothingSearchProvider)
-    assert isinstance(abilities.material_identifier, MockMaterialIdentifier)
-    assert isinstance(abilities.material_search, MockMaterialImageSearchProvider)
-    assert isinstance(abilities.design_generator, MockDesignGenerator)
-    assert abilities.real_providers == []
+    assert abilities.providers["material_identifier"] == ""
+    with pytest.raises(AbilityNotConfigured) as info:
+        abilities.material_identifier.identify(b"x")
+    assert "识别服装材质" in str(info.value)
 
 
 def test_material_search_can_use_unsplash() -> None:
     abilities = build_abilities(_unsplash_material(), _settings())
-
     assert abilities.providers["material_search"] == "unsplash"
     assert isinstance(abilities.material_search, UnsplashMaterialSearchProvider)
-    assert abilities.real_providers == ["material_search=unsplash"]
 
 
 def test_unsplash_material_missing_key_emits_warning() -> None:
     ability = _unsplash_material(material_search_api_key="")
     warnings = config_warnings(build_abilities(ability, _settings()), ability)
-
     assert any("查找材质图" in warning for warning in warnings)
     assert any("API Key" in warning for warning in warnings)
 
 
 def test_clothing_search_can_use_unsplash() -> None:
     abilities = build_abilities(_unsplash(), _settings())
-
     assert abilities.providers["clothing_search"] == "unsplash"
     assert isinstance(abilities.clothing_search, UnsplashClothingSearchProvider)
-    assert abilities.real_providers == ["clothing_search=unsplash"]
 
 
 def test_unsplash_missing_key_emits_warning() -> None:
     ability = _unsplash(clothing_search_api_key="")
     warnings = config_warnings(build_abilities(ability, _settings()), ability)
-
     assert any("搜索服装图" in warning for warning in warnings)
     assert any("API Key" in warning for warning in warnings)
 
 
-def test_switching_one_ability_yields_mixed_mode() -> None:
+def test_switching_one_ability_leaves_others_unconfigured() -> None:
     abilities = build_abilities(_identifier(), _settings())
 
-    assert abilities.mode == "mixed"
     assert isinstance(abilities.material_identifier, OpenAICompatibleVLMIdentifier)
-    assert isinstance(abilities.design_generator, MockDesignGenerator)
-    assert abilities.real_providers == ["material_identifier=openai_compatible"]
+    assert abilities.providers["design_generator"] == ""
+    with pytest.raises(AbilityNotConfigured):
+        abilities.design_generator.generate([], "x")
 
 
 def test_identifier_receives_explicit_config() -> None:
@@ -160,7 +171,7 @@ def test_unknown_provider_fails_fast_with_helpful_message() -> None:
 
     message = str(info.value)
     assert "material_identifier" in message
-    assert "mock" in message and "openai_compatible" in message
+    assert "openai_compatible" in message
 
 
 def test_missing_api_key_emits_warning() -> None:
@@ -180,6 +191,9 @@ def test_missing_endpoint_and_model_emit_warnings() -> None:
     assert any("模型" in warning for warning in warnings)
 
 
-def test_no_warnings_for_pure_mock_setup() -> None:
+def test_unconfigured_abilities_emit_warnings() -> None:
     ability = AbilitySettings()
-    assert config_warnings(build_abilities(ability, _settings()), ability) == []
+    warnings = config_warnings(build_abilities(ability, _settings()), ability)
+
+    assert len(warnings) == 4
+    assert all("未选择实现" in warning for warning in warnings)

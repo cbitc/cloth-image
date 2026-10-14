@@ -1,16 +1,17 @@
-"""Mock 图生图：确定性生成设计图候选，并输出真实组装好的 prompt。"""
+"""Fake 图生图：确定性生成设计图候选，并输出真实组装好的 prompt（仅供测试）。"""
 
 from __future__ import annotations
 
 import hashlib
 
 from app.abilities.base import DesignImageResult, MaterialImageResult, ReferenceImage
-from app.abilities.mock_images import KIND_DESIGN, make_image
 from app.abilities.prompting import NEGATIVE_PROMPT, build_design_prompt
 
+from fakes.placeholder_images import KIND_DESIGN, make_image
 
-class MockDesignGenerator:
-    name = "mock"
+
+class FakeDesignGenerator:
+    name = "fake"
 
     def generate(
         self,
@@ -46,9 +47,10 @@ class MockDesignGenerator:
                     image_bytes=data,
                     prompt=prompt,
                     negative_prompt=NEGATIVE_PROMPT,
-                    model="mock-diffusion-v1",
-                    seed=int(hashlib.sha256(seed_str.encode("utf-8")).hexdigest()[:8], 16),
-                    is_mock=True,
+                    model="fake-diffusion-v1",
+                    seed=int(
+                        hashlib.sha256(seed_str.encode("utf-8")).hexdigest()[:8], 16
+                    ),
                     rank=i,
                 )
             )

@@ -6,12 +6,14 @@
 from __future__ import annotations
 
 from app.abilities.base import Abilities, MaterialTagResult
-from app.abilities.clothing_search import MockClothingSearchProvider
-from app.abilities.design_generate import MockDesignGenerator
-from app.abilities.material_search import MockMaterialImageSearchProvider
 from app.db.models import ClothingImage, IdentifyCache, Task
 from app.db.session import SessionLocal
 from app.tasks import cache
+from fakes import (
+    FakeClothingSearchProvider,
+    FakeDesignGenerator,
+    FakeMaterialImageSearchProvider,
+)
 
 TAGS = [
     MaterialTagResult(
@@ -172,8 +174,8 @@ class _CountingIdentifier:
 
 
 def _make_clothing(db, seed: str) -> ClothingImage:
-    from app.abilities.mock_images import KIND_CLOTHING, make_image
     from app.tasks.persist import persist_bytes
+    from fakes.placeholder_images import KIND_CLOTHING, make_image
 
     persisted = persist_bytes(
         "clothing",
@@ -187,7 +189,7 @@ def _make_clothing(db, seed: str) -> ClothingImage:
         image_hash=persisted.image_hash,
         title="缓存集成测试",
         site="test",
-        provider="mock",
+        provider="fake",
     )
     db.add(row)
     db.commit()
@@ -202,11 +204,10 @@ def test_second_task_reuses_cache_without_calling_model(monkeypatch) -> None:
 
     def fake_get_abilities() -> Abilities:
         return Abilities(
-            clothing_search=MockClothingSearchProvider(),
+            clothing_search=FakeClothingSearchProvider(),
             material_identifier=stub,
-            material_search=MockMaterialImageSearchProvider(),
-            design_generator=MockDesignGenerator(),
-            mode="mock",
+            material_search=FakeMaterialImageSearchProvider(),
+            design_generator=FakeDesignGenerator(),
             providers={},
         )
 

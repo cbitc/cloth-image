@@ -39,7 +39,8 @@ export const api = {
   health: () =>
     request<{ status: string; abilities: Record<string, string> }>("/api/health"),
 
-  listSites: () => request<{ mode: string; sites: SiteOption[] }>("/api/search/sites"),
+  listSites: () =>
+    request<{ provider: string; sites: SiteOption[] }>("/api/search/sites"),
 
   searchClothing: (payload: { sites: string[]; query: string; count: number }) =>
     request<SearchClothingResponse>("/api/search/clothing", {

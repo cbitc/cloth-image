@@ -5,7 +5,7 @@
 
 阿里 MaaS 实测要点：
   - `POST {base}/chat/completions`，content 用标准多模态数组
-  - `response_format={"type":"json_object"}` 可用（不可用时自动降级重试）
+  - `response_format={"type":"json_object"}` 可用
   - `usage.prompt_tokens_details.image_tokens` 反映图片开销
 """
 
@@ -17,11 +17,7 @@ import re
 from typing import Any
 
 from app.abilities.base import MaterialTagResult
-from app.abilities.http import (
-    ProviderBadRequestError,
-    ProviderError,
-    RetryingHttpClient,
-)
+from app.abilities.http import ProviderError, RetryingHttpClient
 from app.abilities.image_ops import prepare_vision_image
 from app.taxonomy import load_taxonomy
 
@@ -176,16 +172,7 @@ class OpenAICompatibleVLMIdentifier:
 
         body = dict(payload)
         body["response_format"] = {"type": "json_object"}
-        try:
-            return self._http.post_json(url, body, headers=headers)
-        except ProviderBadRequestError as exc:
-            # 部分兼容端点不支持 response_format，剥掉后用纯文本约束重试一次
-            logger.warning(
-                "%s 不接受 response_format，降级为纯文本 JSON 约束重试：%s",
-                self.model,
-                exc,
-            )
-            return self._http.post_json(url, payload, headers=headers)
+        return self._http.post_json(url, body, headers=headers)
 
     def _extract_content(self, response: dict[str, Any]) -> str:
         choices = response.get("choices") or []

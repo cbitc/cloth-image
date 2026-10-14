@@ -23,7 +23,6 @@ from app.api import (
 )
 from app.config import apply_overrides, get_settings
 from app.db import models  # noqa: F401  确保模型注册到 Base.metadata
-from app.db.schema import sync_sqlite_schema
 from app.db.session import Base, SessionLocal, engine
 
 logging.basicConfig(
@@ -39,14 +38,6 @@ settings = get_settings()
 async def lifespan(_: FastAPI):
     # MVP：启动时确保表结构存在（生产环境请以 alembic 迁移为准）
     Base.metadata.create_all(bind=engine)
-    # create_all 只补表、不补列/索引；旧开发库在这里幂等自愈，避免 500
-    repaired = sync_sqlite_schema(engine, Base.metadata)
-    if repaired:
-        logger.warning(
-            "检测到旧版数据库结构，已自动补齐 %d 项：%s",
-            len(repaired),
-            "、".join(repaired),
-        )
 
     # 先加载设置页写入的覆盖项，再构建能力实现（顺序不能反）
     with SessionLocal() as db:
@@ -59,9 +50,7 @@ async def lifespan(_: FastAPI):
         )
 
     abilities = get_abilities()
-    logger.info("能力提供方：%s（mode=%s）", abilities.summary(), abilities.mode)
-    if abilities.real_providers:
-        logger.info("已启用真实能力：%s", "、".join(abilities.real_providers))
+    logger.info("能力提供方：%s", abilities.summary())
     for warning in config_warnings(abilities, get_ability_settings()):
         logger.warning("配置提醒：%s", warning)
     yield
@@ -117,7 +106,6 @@ def health() -> dict:
         "status": "ok",
         "version": __version__,
         "abilities": abilities.providers,
-        "abilities_mode": abilities.mode,
         "storage_backend": effective.storage_backend,
         "task_execution": effective.task_execution,
     }

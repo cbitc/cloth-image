@@ -1,4 +1,4 @@
-"""能力层契约测试：mock 实现必须满足 Protocol 且行为确定。"""
+"""能力层契约测试：fake 实现必须满足 Protocol 且行为确定。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from app.taxonomy import all_materials, build_material_query, load_taxonomy
 
 def test_registry_provides_all_protocols() -> None:
     abilities = get_abilities()
-    assert abilities.mode == "mock"
     assert isinstance(abilities.clothing_search, ClothingSearchProvider)
     assert isinstance(abilities.material_identifier, MaterialIdentifier)
     assert isinstance(abilities.material_search, MaterialImageSearchProvider)
@@ -23,8 +22,8 @@ def test_registry_provides_all_protocols() -> None:
 
 def test_clothing_search_is_deterministic() -> None:
     abilities = get_abilities()
-    a = abilities.clothing_search.search(["mock-shop"], "风衣", 3)
-    b = abilities.clothing_search.search(["mock-shop"], "风衣", 3)
+    a = abilities.clothing_search.search(["fake-shop"], "风衣", 3)
+    b = abilities.clothing_search.search(["fake-shop"], "风衣", 3)
     assert len(a) == 3
     assert all(item.image_bytes for item in a)
     assert [item.page_url for item in a] == [item.page_url for item in b]
@@ -33,7 +32,7 @@ def test_clothing_search_is_deterministic() -> None:
 
 def test_material_identifier_returns_ranked_tags() -> None:
     abilities = get_abilities()
-    image = abilities.clothing_search.search(["mock-shop"], "衬衫", 1)[0]
+    image = abilities.clothing_search.search(["fake-shop"], "衬衫", 1)[0]
     tags = abilities.material_identifier.identify(image.image_bytes or b"x")
     assert 2 <= len(tags) <= 4
     assert all(t.material in all_materials() for t in tags)
@@ -48,7 +47,7 @@ def test_material_identifier_returns_ranked_tags() -> None:
 
 def test_material_search_and_design_generation() -> None:
     abilities = get_abilities()
-    image = abilities.clothing_search.search(["mock-shop"], "半裙", 1)[0]
+    image = abilities.clothing_search.search(["fake-shop"], "半裙", 1)[0]
     tags = abilities.material_identifier.identify(image.image_bytes or b"x")
 
     materials = abilities.material_search.search(tags, per_tag=2)
@@ -61,7 +60,6 @@ def test_material_search_and_design_generation() -> None:
     )
     assert len(designs) == 2
     assert all(d.image_bytes for d in designs)
-    assert all(d.is_mock for d in designs)
     assert "及膝长度" in designs[0].prompt
 
 

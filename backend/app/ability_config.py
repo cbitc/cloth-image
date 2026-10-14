@@ -6,7 +6,7 @@
   `base_url` / `api_key` / `model`。
 - provider 按协议命名（`openai_compatible` / `openai_compatible_image`），不绑定具体厂商。
 
-代码默认值只保证「零外部依赖即可跑通（全 mock）」。设置页写入的覆盖项存于 `app_setting`
+代码默认值不选择任何实现（provider 为空 = 未配置）。设置页写入的覆盖项存于 `app_setting`
 表，由 `app.config.apply_overrides()` 按字段归属分流到这里。
 """
 
@@ -25,21 +25,21 @@ class AbilitySettings(BaseModel):
     """能力直接相关的配置项。字段名与 `settings_spec.ABILITY_FIELD_NAMES` 一一对应。"""
 
     # 搜索服装图
-    clothing_search_provider: str = "mock"
+    clothing_search_provider: str = ""
     clothing_search_api_key: str = ""
 
     # 查找材质图
-    material_search_provider: str = "mock"
+    material_search_provider: str = ""
     material_search_api_key: str = ""
 
     # 识别服装材质
-    material_identifier_provider: str = "mock"
+    material_identifier_provider: str = ""
     material_identifier_base_url: str = ""
     material_identifier_api_key: str = ""
     material_identifier_model: str = ""
 
     # 图生图生成设计图
-    design_generator_provider: str = "mock"
+    design_generator_provider: str = ""
     design_generator_base_url: str = ""
     design_generator_api_key: str = ""
     design_generator_model: str = ""

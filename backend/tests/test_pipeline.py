@@ -18,13 +18,13 @@ def _create_task(client, clothing_image_id: str, **kwargs) -> dict:
 def test_health(client) -> None:
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert set(resp.json()["abilities"].values()) == {"mock"}
+    assert set(resp.json()["abilities"].values()) == {"fake"}
 
 
 def test_search_clothing(client) -> None:
     resp = client.post(
         "/api/search/clothing",
-        json={"sites": ["mock-shop", "mock-lookbook"], "query": "大衣", "count": 4},
+        json={"sites": ["fake-shop", "fake-lookbook"], "query": "大衣", "count": 4},
     )
     assert resp.status_code == 200
     images = resp.json()["images"]
@@ -84,7 +84,6 @@ def test_full_pipeline_manual_checkpoints(client, sample_clothing_image_id) -> N
     assert detail["status"] == TaskStatus.DONE
     assert detail["design_idea"] == DESIGN_IDEA
     assert len(detail["design_images"]) == 2
-    assert all(d["is_mock"] for d in detail["design_images"])
     assert DESIGN_IDEA in detail["design_images"][0]["prompt"]
 
     # 事件流可用于进度展示

@@ -1,4 +1,4 @@
-"""能力层：契约 + mock/real 实现 + 注册表。"""
+"""能力层：契约 + 真实实现 + 注册表。"""
 
 from app.abilities.base import (
     Abilities,

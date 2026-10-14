@@ -1,9 +1,9 @@
-# AI 服装辅助设计（Mock-first MVP）
+# AI 服装辅助设计（MVP）
 
 一条「**搜图 → 选图建任务 → 视觉识别 → 素材检索 → 图生图**」的多阶段 AI 流水线，辅助服装设计工作。
 
-本仓库是**可运行的 MVP Demo**：四个 AI 能力全部以 Mock 实现（确定性占位图 + 假数据），
-零外部依赖即可跑通全链路；真实 API 通过替换**适配器**接入，架构与前端无需改动。
+本仓库是**可运行的 MVP Demo**：四个 AI 能力均已接入**真实 API**（Unsplash 图库 + OpenAI 兼容端点），
+在设置页配置端点与密钥即可跑通全链路；新增一家服务只需加一个**适配器**，架构与前端无需改动。
 
 ---
 
@@ -11,12 +11,12 @@
 
 | 能力 | 签名 | 当前实现 |
 |---|---|---|
-| 搜索服装图 | `searchClothingImages :: [网站列表] -> [服装图片列表]` | `MockClothingSearchProvider` / `UnsplashClothingSearchProvider` |
-| 识别服装材质 | `identifyClothingMaterial :: 服装图片 -> [材质tag列表]` | `MockMaterialIdentifier` / `OpenAICompatibleVLMIdentifier` |
-| 查找材质图 | `searchMaterialImages :: [材质tag列表] -> [材质图片列表]` | `MockMaterialImageSearchProvider` / `UnsplashMaterialSearchProvider` |
-| 图生图生成设计图 | `generateDesignImage :: ([材质图片], 设计想法) -> [设计图]` | `MockDesignGenerator` / `OpenAICompatibleImageGenerator` |
+| 搜索服装图 | `searchClothingImages :: [网站列表] -> [服装图片列表]` | `UnsplashClothingSearchProvider` |
+| 识别服装材质 | `identifyClothingMaterial :: 服装图片 -> [材质tag列表]` | `OpenAICompatibleVLMIdentifier` |
+| 查找材质图 | `searchMaterialImages :: [材质tag列表] -> [材质图片列表]` | `UnsplashMaterialSearchProvider` |
+| 图生图生成设计图 | `generateDesignImage :: ([材质图片], 设计想法) -> [设计图]` | `OpenAICompatibleImageGenerator` |
 
-四个能力的契约定义在 `backend/app/abilities/base.py`，Mock 与真实实现**签名一致、可热插拔**。
+四个能力的契约定义在 `backend/app/abilities/base.py`，实现通过 `registry.register_provider()` **热插拔**。
 
 ---
 
@@ -113,19 +113,18 @@ cloth-image/
 │     │  ├─ base.py            #   4 个 Protocol + DTO
 │     │  ├─ http.py            #   共享 HTTP 客户端（超时 / 重试 / 具名异常）
 │     │  ├─ image_ops.py       #   缩放、缩略图、data URL 编码
-│     │  ├─ mock_images.py     #   Pillow 确定性占位图
 │     │  ├─ prompting.py       #   图生图 prompt 组装
-│     │  ├─ registry.py        #   按能力注入实现（混合 mock / 真实）
+│     │  ├─ registry.py        #   按能力注入实现（provider 工厂表）
 │     │  ├─ unsplash_client.py #   Unsplash 共享客户端（鉴权 / 分页 / 归一化）
-│     │  ├─ clothing_search/{mock.py, unsplash.py}
-│     │  ├─ material_identify/{mock.py, openai_compatible_vlm.py}
-│     │  ├─ material_search/{mock.py, unsplash.py}
-│     │  └─ design_generate/{mock.py, openai_compatible_image.py}
+│     │  ├─ clothing_search/unsplash.py
+│     │  ├─ material_identify/openai_compatible_vlm.py
+│     │  ├─ material_search/unsplash.py
+│     │  └─ design_generate/openai_compatible_image.py
 │     ├─ taxonomy/materials.yaml  # 受控材质词表（60 条，中英双语）
 │     ├─ tasks/                # 状态机 / 编排器 / 分发器 / worker / 持久化 / 序列化 / fetch(下载+镜像)
 │     ├─ tools/probe.py        # 真实 provider 联调探针
 │     └─ api/                  # search / tasks / events(SSE) / taxonomy / media
-│  └─ tests/                   # 能力契约 / 状态机 / 端到端 / 适配器 / 图片工具 / 镜像
+│  └─ tests/                   # 能力契约 / 状态机 / 端到端 / 适配器 / fakes（测试用假实现）
 └─ frontend/
    └─ src/
       ├─ app/page.tsx          # 搜图 + 缩略图墙 + 多选建任务
@@ -202,10 +201,10 @@ npm run dev
 打开 `http://localhost:3000/settings`：
 
 - **四个能力**各自显式选择实现，且仅当选中真实实现时才展开配置项：
-  - 搜索服装图：`mock` / `unsplash`（Unsplash 图库检索，只需 Access Key）
-  - 查找材质图：`mock` / `unsplash`（Unsplash 面料特写，每个材质 tag 一次请求）
-  - 识别：`mock` / `openai_compatible`（OpenAI 兼容 `/chat/completions`）
-  - 生图：`mock` / `openai_compatible_image`（OpenAI 兼容 `/images/generations`）
+  - 搜索服装图：`unsplash`（Unsplash 图库检索，只需 Access Key）
+  - 查找材质图：`unsplash`（Unsplash 面料特写，每个材质 tag 一次请求）
+  - 识别：`openai_compatible`（OpenAI 兼容 `/chat/completions`）
+  - 生图：`openai_compatible_image`（OpenAI 兼容 `/images/generations`）
 - 调整生图参数、识别参数、流水线参数与 HTTP 超时/重试
 - 查看识别缓存的命中数与估算省下的 token，并可一键清空
 
@@ -222,8 +221,8 @@ npm run dev
 - **界面报 `Failed to fetch`**：多半是后端没起来或请求打在了代理上。
   `fetch` 只有在**连接层失败**或**响应缺 CORS 头**时才报这个（而不是 500）。
   先看后端终端有没有 traceback；本机验证用 `curl.exe -s --noproxy "*" http://127.0.0.1:8000/api/health`。
-- **后端日志 `no such column: clothing_image.image_hash`**：旧版 `.data/app.db` 缺列。
-  启动时会自动补齐（`app/db/schema.py`，仅 SQLite）；也可直接删除 `.data/app.db` 重建。
+- **后端日志 `no such column: ...`**：本地 `.data/app.db` 建于旧迁移之前。
+  执行 `alembic upgrade head` 升级，或直接删除 `.data/app.db` 重建（已不再有启动时自愈）。
 
 ---
 
@@ -285,10 +284,10 @@ cd backend
 （推荐，立即生效且持久化）逐项选择实现即可；provider 名写错会在**构造能力时立即报错**，
 启动日志还会提示端点 / Key / 模型是否缺失。
 
-- 搜索服装图：`mock` / `unsplash`（只需 Unsplash Access Key）
-- 识别：`mock` / `openai_compatible`
-- 生图：`mock` / `openai_compatible_image`
-- 查找材质图：`mock` / `unsplash`（可与服装图共用同一个 Access Key）
+- 搜索服装图：`unsplash`（只需 Unsplash Access Key）
+- 识别：`openai_compatible`
+- 生图：`openai_compatible_image`
+- 查找材质图：`unsplash`（可与服装图共用同一个 Access Key）
 
 > 环境变量**不再**参与能力配置（这是刻意去掉的兼容层）。
 
@@ -335,6 +334,7 @@ cd backend
 ```bash
 cd backend
 python -m app.tools.probe                  # 识别 + 生图各跑一次（真实调用，消耗额度）
+python -m app.tools.probe --image x.jpg    # 指定输入图
 python -m app.tools.probe --skip-image     # 只探识别
 ```
 
@@ -342,13 +342,13 @@ python -m app.tools.probe --skip-image     # 只探识别
 
 ### 9.5 新增一个 provider
 
-四个能力目前都已有 mock + 真实实现。要再接一家：
+要再接一家 provider：
 
 1. 在 `abilities/<能力>/` 下加适配器类（实现对应 Protocol）；
 2. `settings_spec.py` 的 `ABILITY_SPECS` 把该能力的 `options` 加上新 provider 名、
-   `fields` 补上需要的配置项（`real_implemented=True` 时 UI 会自动展开）；
+   `fields` 补上需要的配置项（选中真实实现时 UI 会自动展开）；
 3. `abilities/ability_config.py` 加上对应字段（形如 `{ability}_api_key`）；
-4. `abilities/registry.py` 的 builder 里加分支。
+4. `abilities/registry.py` 用 `register_provider()` 注册该 provider 的工厂。
 
 UI、校验与告警（`config_warnings`）都会自动跟随 spec，无需改前端。
 

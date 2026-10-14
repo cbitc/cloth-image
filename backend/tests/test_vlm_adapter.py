@@ -13,7 +13,12 @@ import httpx
 import pytest
 from PIL import Image
 
-from app.abilities.http import ProviderAuthError, ProviderError, RetryingHttpClient
+from app.abilities.http import (
+    ProviderAuthError,
+    ProviderBadRequestError,
+    ProviderError,
+    RetryingHttpClient,
+)
 from app.abilities.material_identify import OpenAICompatibleVLMIdentifier
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -186,25 +191,20 @@ def test_retries_on_5xx_then_succeeds() -> None:
     assert tags[0].material == "棉"
 
 
-def test_falls_back_when_response_format_is_rejected() -> None:
-    sent_response_format: list[bool] = []
+def test_response_format_is_always_sent_and_rejection_propagates() -> None:
+    sent: list[bool] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
-        sent_response_format.append("response_format" in body)
-        if "response_format" in body:
-            return httpx.Response(
-                400, json={"error": {"message": "response_format is not supported"}}
-            )
-        return _chat(
-            json.dumps(
-                {"tags": [{"material": "涤纶", "confidence": 0.8, "evidence": "x"}]}
-            )
+        sent.append("response_format" in body)
+        return httpx.Response(
+            400, json={"error": {"message": "response_format is not supported"}}
         )
 
-    tags = _identifier(handler).identify(_png())
-    assert sent_response_format == [True, False]  # 先带后剥，各一次
-    assert tags[0].material == "涤纶"
+    with pytest.raises(ProviderBadRequestError):
+        _identifier(handler).identify(_png())
+
+    assert sent == [True]  # 始终携带 response_format，不再降级重试
 
 
 def test_missing_image_data_raises_before_request() -> None:

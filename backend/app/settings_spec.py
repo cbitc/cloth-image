@@ -18,7 +18,6 @@ from typing import Any
 # --------------------------------------------------------------------------- #
 # 四个能力的元信息
 # --------------------------------------------------------------------------- #
-# `real_implemented=False` 的能力只有 mock 实现：UI 只展示状态，不提供 provider 选择。
 # provider 按协议/服务命名：
 #   clothing_search     : unsplash                 （Unsplash 图库检索）
 #   material_search     : unsplash                 （Unsplash 面料特写检索）
@@ -29,8 +28,7 @@ ABILITY_SPECS: list[dict[str, Any]] = [
         "ability": "clothing_search",
         "label": "搜索服装图",
         "signature": "[网站列表] → [服装图片列表]",
-        "real_implemented": True,
-        "options": ["mock", "unsplash"],
+        "options": ["unsplash"],
         "hint": "Unsplash 图库检索（不按站点过滤）；demo 应用限 50 次/小时",
         "fields": [
             {
@@ -45,8 +43,7 @@ ABILITY_SPECS: list[dict[str, Any]] = [
         "ability": "material_identifier",
         "label": "识别服装材质",
         "signature": "服装图片 → [材质 tag 列表]",
-        "real_implemented": True,
-        "options": ["mock", "openai_compatible"],
+        "options": ["openai_compatible"],
         "hint": "底层走 OpenAI 兼容协议（/chat/completions），可指向任意兼容端点",
         "fields": [
             {
@@ -73,8 +70,7 @@ ABILITY_SPECS: list[dict[str, Any]] = [
         "ability": "material_search",
         "label": "查找材质图",
         "signature": "[材质 tag 列表] → [材质图片列表]",
-        "real_implemented": True,
-        "options": ["mock", "unsplash"],
+        "options": ["unsplash"],
         "hint": "Unsplash 面料特写检索（每个材质 tag 一次请求）；demo 限 50 次/小时",
         "fields": [
             {
@@ -89,8 +85,7 @@ ABILITY_SPECS: list[dict[str, Any]] = [
         "ability": "design_generator",
         "label": "图生图生成设计图",
         "signature": "([材质图片], 设计想法) → [设计图]",
-        "real_implemented": True,
-        "options": ["mock", "openai_compatible_image"],
+        "options": ["openai_compatible_image"],
         "hint": "底层走 OpenAI 兼容协议（/images/generations），可指向任意兼容端点",
         "fields": [
             {
@@ -120,13 +115,12 @@ ABILITY_SPECS: list[dict[str, Any]] = [
 # --------------------------------------------------------------------------- #
 # 能力配置字段由 ABILITY_SPECS 自动生成，避免两处维护。
 _REAL_OPTIONS: dict[str, list[str]] = {
-    spec["ability"]: [opt for opt in spec["options"] if opt != "mock"]
-    for spec in ABILITY_SPECS
+    spec["ability"]: list(spec["options"]) for spec in ABILITY_SPECS
 }
 
 
 def _provider_fields() -> list[dict[str, Any]]:
-    """每个「有真实实现」的能力一个 provider 选择框（无空值、无全局回退）。"""
+    """每个能力一个 provider 选择框（无空值、无全局回退）。"""
     return [
         {
             "name": f"{spec['ability']}_provider",
@@ -137,7 +131,6 @@ def _provider_fields() -> list[dict[str, Any]]:
             "help": spec["signature"],
         }
         for spec in ABILITY_SPECS
-        if spec["real_implemented"]
     ]
 
 

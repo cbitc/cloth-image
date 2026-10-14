@@ -55,7 +55,7 @@ class ClothingImage(Base):
     title: Mapped[str] = mapped_column(Text, default="")
     site: Mapped[str] = mapped_column(String(64), default="")
     source_query: Mapped[str] = mapped_column(Text, default="")
-    provider: Mapped[str] = mapped_column(String(32), default="mock")
+    provider: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -147,7 +147,6 @@ class DesignImage(Base):
     negative_prompt: Mapped[str] = mapped_column(Text, default="")
     model: Mapped[str] = mapped_column(String(64), default="")
     seed: Mapped[int] = mapped_column(Integer, default=0)
-    is_mock: Mapped[bool] = mapped_column(Boolean, default=True)
     rank: Mapped[int] = mapped_column(Integer, default=0)
 
     task: Mapped[Task] = relationship(back_populates="design_images")

@@ -1,4 +1,4 @@
-"""Prompt 组装（mock 与真实 provider 共用）。"""
+"""Prompt 组装（各 provider 共用）。"""
 
 from __future__ import annotations
 
@@ -22,13 +22,13 @@ def build_design_prompt(
     if has_reference:
         lines.append("参考图1 = 原服装图（款式 / 版型参考）。")
     if material_images_count:
-        lines.append(
-            f"参考图2~{material_images_count + 1} = 识别出的材质图。"
-        )
+        lines.append(f"参考图2~{material_images_count + 1} = 识别出的材质图。")
     lines.append(
         f"将参考图1的服装重新设计：{design_idea.strip() or '在保留原有版型的前提下优化设计'}。"
     )
-    lines.append(f"面料使用参考材质图所示的「{tags}」材质，保留参考图1的版型轮廓与比例。")
+    lines.append(
+        f"面料使用参考材质图所示的「{tags}」材质，保留参考图1的版型轮廓与比例。"
+    )
     lines.append("输出高清服装设计效果图，真实面料质感，专业时尚摄影光。")
     return "\n".join(lines)
 

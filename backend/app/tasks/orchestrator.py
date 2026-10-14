@@ -443,7 +443,6 @@ def run_generate(
                         negative_prompt=result.negative_prompt,
                         model=result.model,
                         seed=result.seed,
-                        is_mock=result.is_mock,
                         rank=result.rank,
                     )
                 )

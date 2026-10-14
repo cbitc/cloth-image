@@ -1,4 +1,4 @@
-"""Mock 材质识别：基于图片内容哈希确定性输出 tag + 可能度分析。"""
+"""Fake 材质识别：基于图片内容哈希确定性输出 tag + 可能度分析（仅供测试）。"""
 
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ EVIDENCE_TEMPLATES = [
 ]
 
 
-class MockMaterialIdentifier:
-    name = "mock"
+class FakeMaterialIdentifier:
+    name = "fake"
 
     def identify(
         self,
@@ -36,7 +36,7 @@ class MockMaterialIdentifier:
         context_title: str = "",
     ) -> list[MaterialTagResult]:
         seed_src = image_bytes if image_bytes else image_url.encode("utf-8")
-        digest = hashlib.sha256(seed_src or b"mock-seed").hexdigest()
+        digest = hashlib.sha256(seed_src or b"fake-seed").hexdigest()
         rng = random.Random(int(digest[:16], 16))
 
         taxonomy = load_taxonomy()

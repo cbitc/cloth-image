@@ -24,6 +24,9 @@ export function FieldEditor({
   const inputClass =
     "w-full rounded-xl border border-white/10 bg-ink-950/70 px-3 py-2 text-sm outline-none focus:border-sky-400/60";
 
+  const choices = spec.choices ?? [];
+  const current = String(value ?? "");
+
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-2">
@@ -54,7 +57,14 @@ export function FieldEditor({
           onChange={(event) => onChange(spec.name, event.target.value)}
           className={inputClass}
         >
-          {(spec.choices ?? []).map((choice) => (
+          {/* 未选择实现时，空值匹配不到任何真实选项；补一个占位项，
+              否则浏览器会把唯一选项显示成"已选中"，导致 show_when 详情字段一直不渲染 */}
+          {!choices.includes(current) ? (
+            <option value="" disabled>
+              （请选择）
+            </option>
+          ) : null}
+          {choices.map((choice) => (
             <option key={choice || "__inherit__"} value={choice}>
               {spec.option_labels?.[choice] ?? (choice || "（跟随全局）")}
             </option>

@@ -162,7 +162,6 @@ class OpenAICompatibleImageGenerator:
                 negative_prompt=NEGATIVE_PROMPT,
                 model=self.model,
                 seed=0,
-                is_mock=False,
                 rank=index,
             )
             for index, url in enumerate(urls)

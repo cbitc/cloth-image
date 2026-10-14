@@ -4,9 +4,10 @@
 「材质识别」与「生图」两个真实能力是否配置正确、能否调通。
 
 用法：
-    python -m app.tools.probe                  # 识别 + 生图
-    python -m app.tools.probe --skip-image     # 只探识别
-    python -m app.tools.probe --skip-identify  # 只探生图
+    python -m app.tools.probe                    # 识别 + 生图
+    python -m app.tools.probe --image x.jpg      # 指定输入图
+    python -m app.tools.probe --skip-image       # 只探识别
+    python -m app.tools.probe --skip-identify    # 只探生图
 
 注意：会**真实调用外部 API 并消耗额度**，请确认 .env 已配好再运行。
 """
@@ -14,15 +15,28 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from app.ability_config import get_ability_settings
 from app.abilities.base import ReferenceImage
-from app.abilities.mock_images import KIND_CLOTHING, make_image
 from app.abilities.registry import config_warnings, get_abilities
 from app.config import get_settings
+
+
+def _load_probe_image(path: str | None) -> bytes:
+    """输入图：给了路径就用它，否则用一张内置纯色小图（不依赖任何示例素材）。"""
+    if path:
+        return Path(path).read_bytes()
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (512, 512), (140, 150, 165)).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _dump_usage(label: str, usage: Any) -> None:
@@ -36,6 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="probe", description="真实 provider 联调探针")
     parser.add_argument("--skip-identify", action="store_true", help="跳过材质识别")
     parser.add_argument("--skip-image", action="store_true", help="跳过生图")
+    parser.add_argument(
+        "--image",
+        type=str,
+        default=None,
+        help="用作输入图的本地文件路径；省略则用内置纯色小图",
+    )
     args = parser.parse_args(argv)
 
     ability = get_ability_settings()
@@ -53,10 +73,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[配置提醒] {warning}")
     print("=" * 68)
 
-    image = make_image(
-        seed="probe-image", label="PROBE", kind=KIND_CLOTHING, footer="probe"
-    )
-    print(f"\n输入占位图: {len(image)} bytes\n")
+    image = _load_probe_image(args.image)
+    print(f"\n输入图: {len(image)} bytes\n")
 
     tags: list[Any] = []
 
@@ -64,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[1/2] 材质识别 · provider={abilities.providers['material_identifier']}")
         try:
             tags = abilities.material_identifier.identify(
-                image, "image/png", context_title="探针占位图"
+                image, "image/png", context_title="探针输入图"
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  [失败] {type(exc).__name__}: {exc}")
@@ -89,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
             results = abilities.design_generator.generate(
                 materials,
                 "改成收腰版型，裙摆加长到脚踝，保留原立领",
-                ReferenceImage(image_bytes=image, caption="探针占位图"),
+                ReferenceImage(image_bytes=image, caption="探针输入图"),
                 num_candidates=1,
             )
         except Exception as exc:  # noqa: BLE001

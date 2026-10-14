@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.abilities.base import ClothingImageResult
 from app.abilities.http import ProviderError
-from app.abilities.registry import get_abilities
+from app.abilities.registry import AbilityNotConfigured, get_abilities
 from app.db.models import ClothingImage
 from app.db.session import get_db
 from app.schemas import (
@@ -19,24 +19,14 @@ from app.tasks.persist import resolve_image
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
-# 可选网站（Mock 模式下为示例站点；真实 provider 下按能力动态返回）
-AVAILABLE_SITES = [
-    {"id": "mock-shop", "label": "示例商城（mock-shop）"},
-    {"id": "mock-lookbook", "label": "示例 Lookbook（mock-lookbook）"},
-    {"id": "pinterest", "label": "Pinterest（需真实 provider）"},
-    {"id": "taobao", "label": "淘宝（需真实 provider）"},
-]
-
-#: Unsplash 不支持按站点过滤，只给一个占位项
-UNSPLASH_SITES = [{"id": "unsplash", "label": "Unsplash（不限站点）"}]
-
 
 @router.get("/sites")
 def list_sites() -> dict:
+    """可选网站列表：由当前 provider 自行暴露（Unsplash 不支持站点过滤）。"""
     abilities = get_abilities()
-    provider = abilities.providers.get("clothing_search", "mock")
-    sites = UNSPLASH_SITES if provider == "unsplash" else AVAILABLE_SITES
-    return {"mode": abilities.mode, "provider": provider, "sites": sites}
+    provider = abilities.providers.get("clothing_search", "")
+    sites = list(getattr(abilities.clothing_search, "sites", []) or [])
+    return {"provider": provider, "sites": sites}
 
 
 @router.post("/clothing", response_model=SearchClothingResponse)
@@ -48,8 +38,8 @@ def search_clothing(
         results: list[ClothingImageResult] = abilities.clothing_search.search(
             payload.sites, payload.query, payload.count
         )
-    except NotImplementedError as exc:
-        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except AbilityNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ProviderError as exc:
         # 鉴权失败 / 限流 / 上游错误 → 502，带上可读原因（而不是裸 500）
         raise HTTPException(status_code=502, detail=str(exc)) from exc

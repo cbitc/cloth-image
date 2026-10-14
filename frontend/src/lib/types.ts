@@ -51,7 +51,6 @@ export interface DesignImage {
   prompt: string;
   model: string;
   seed: number;
-  is_mock: boolean;
   rank: number;
 }
 
@@ -144,14 +143,13 @@ export interface FieldGroup {
   fields: FieldSpec[];
 }
 
-export type AbilityState = "ready" | "missing_key";
+export type AbilityState = "ready" | "missing_key" | "unconfigured";
 
 export interface AbilityStatus {
   ability: string;
   label: string;
   signature: string;
   provider: string;
-  real_implemented: boolean;
   options: string[];
   state: AbilityState;
   state_label: string;

@@ -7,7 +7,7 @@
   searchMaterialImages      :: [材质 tag 列表]     -> [材质图片列表]
   generateDesignImage       :: ([材质图], 设计想法) -> [设计图]
 
-实现分为 mock（默认）与 real（真实 API）；两者签名一致、可热插拔。
+实现为真实 API；测试可用 fake 实现替换；两者签名一致、可热插拔。
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ class ClothingImageResult:
     `image_bytes` 有值表示需要落盘；否则使用 `external_url`（外部已托管地址）。
     """
 
-    provider: str = "mock"
+    provider: str = ""
     content_type: str = "image/png"
     image_bytes: bytes | None = None
     external_url: str = ""
@@ -66,7 +66,6 @@ class DesignImageResult:
     negative_prompt: str = ""
     model: str = ""
     seed: int = 0
-    is_mock: bool = True
     rank: int = 0
 
 
@@ -143,22 +142,13 @@ class Abilities:
     material_identifier: MaterialIdentifier
     material_search: MaterialImageSearchProvider
     design_generator: DesignImageGenerator
-    mode: str = "mock"
     providers: dict[str, str] = field(default_factory=dict)
     extras: dict = field(default_factory=dict)
 
-    @property
-    def real_providers(self) -> list[str]:
-        """非 mock 的能力列表，用于启动日志与健康检查。"""
-        return [
-            f"{name}={value}"
-            for name, value in self.providers.items()
-            if value != "mock"
-        ]
-
     def summary(self) -> str:
         if not self.providers:
-            return self.mode
+            return "<无>"
         return ", ".join(
-            f"{name}={value}" for name, value in sorted(self.providers.items())
+            f"{name}={value or '<未配置>'}"
+            for name, value in sorted(self.providers.items())
         )

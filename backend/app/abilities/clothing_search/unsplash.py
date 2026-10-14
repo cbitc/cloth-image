@@ -33,6 +33,8 @@ MAX_COUNT = 60
 
 class UnsplashClothingSearchProvider:
     name = "unsplash"
+    #: 供 /api/search/sites 展示；Unsplash 不支持站点过滤，仅一个说明项
+    sites = [{"id": "unsplash", "label": "Unsplash（不限站点）"}]
 
     def __init__(
         self,

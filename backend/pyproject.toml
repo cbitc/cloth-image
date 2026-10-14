@@ -1,7 +1,7 @@
 [project]
 name = "cloth-image-backend"
 version = "0.1.0"
-description = "AI 服装辅助设计 —— 后端流水线（Mock-first）"
+description = "AI 服装辅助设计 —— 后端流水线"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",

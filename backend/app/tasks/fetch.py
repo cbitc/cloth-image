@@ -9,13 +9,9 @@
 
 from __future__ import annotations
 
-import logging
-
 from app.abilities.http import ProviderError, RetryingHttpClient
 from app.config import get_settings
-from app.tasks.persist import PersistedImage, persist_bytes, persist_external
-
-logger = logging.getLogger(__name__)
+from app.tasks.persist import PersistedImage, persist_bytes
 
 _download_client: RetryingHttpClient | None = None
 
@@ -58,22 +54,10 @@ def mirror_image(
     prefix: str,
     *,
     client: RetryingHttpClient | None = None,
-    fallback_external: bool = True,
 ) -> PersistedImage:
     """下载外部图片 → 落盘 → 返回自有 URL。
 
-    镜像失败时：`fallback_external=True` 会降级为直接引用外链（记 WARNING），
-    避免因为一张图下载失败就让整个任务失败。生产环境可设为 False 以强制暴露问题。
+    镜像失败即抛错：临时签名 URL 过期后图片会静默 404，不允许静默降级为外链。
     """
-    try:
-        data, content_type = fetch_image_bytes(url, client=client)
-        return persist_bytes(prefix, data, content_type)
-    except Exception as exc:  # noqa: BLE001
-        if not fallback_external:
-            raise
-        logger.warning(
-            "镜像外部图片失败，降级为直接引用外链（该 URL 可能过期）: %s (%s)",
-            url[:120],
-            exc,
-        )
-        return persist_external(prefix, url)
+    data, content_type = fetch_image_bytes(url, client=client)
+    return persist_bytes(prefix, data, content_type)

@@ -15,6 +15,7 @@ import type {
 const STATE_STYLE: Record<AbilityState, string> = {
   ready: "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40",
   missing_key: "bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/40",
+  unconfigured: "bg-slate-500/20 text-slate-300 ring-1 ring-slate-500/40",
 };
 
 export default function SettingsPage() {
@@ -225,7 +226,7 @@ export default function SettingsPage() {
       </Card>
 
       <Card>
-        <SectionTitle hint="每项能力显式选择实现并填写端点；搜索类能力暂无真实实现">
+        <SectionTitle hint="每项能力显式选择实现并填写端点；未选择实现的能力不可用">
           四个能力
         </SectionTitle>
         <div className="grid gap-4 lg:grid-cols-2">
@@ -253,20 +254,14 @@ export default function SettingsPage() {
                   </span>
                 </div>
                 <p className="font-mono text-[11px] text-slate-500">{item.signature}</p>
-                {providerSpec ? (
-                  <FieldEditor
-                    spec={providerSpec}
-                    value={draft[providerSpec.name]}
-                    overridden={overridden.has(providerSpec.name)}
-                    onChange={setValue}
-                    onSecretChange={setSecret}
-                    onSecretClear={clearSecret}
-                  />
-                ) : (
-                  <p className="rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-1.5 text-[11px] text-slate-500">
-                    仅 Mock（暂无真实实现）
-                  </p>
-                )}
+                <FieldEditor
+                  spec={providerSpec}
+                  value={draft[providerSpec.name]}
+                  overridden={overridden.has(providerSpec.name)}
+                  onChange={setValue}
+                  onSecretChange={setSecret}
+                  onSecretClear={clearSecret}
+                />
                 {extraFields.filter(visible).map((spec) => (
                   <FieldEditor
                     key={spec.name}

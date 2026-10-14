@@ -1,6 +1,6 @@
 """图片处理工具：缩略图、视觉输入预处理、data URL 编码。
 
-集中在这里，避免 mock 专用模块（mock_images）承载通用能力。
+集中在这里，避免这份通用能力散落在各个 provider 里。
 """
 
 from __future__ import annotations

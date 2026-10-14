@@ -58,7 +58,6 @@ class DesignImageOut(BaseModel):
     prompt: str
     model: str
     seed: int
-    is_mock: bool
     rank: int
 
 
@@ -100,7 +99,7 @@ class TaskDetail(TaskSummary):
 # 请求模型
 # --------------------------------------------------------------------------- #
 class SearchClothingRequest(BaseModel):
-    sites: list[str] = Field(default_factory=lambda: ["mock"])
+    sites: list[str] = Field(default_factory=list)
     query: str = ""
     count: int = Field(default=24, ge=1, le=60)
 

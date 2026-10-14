@@ -1,6 +1,6 @@
 """确定性占位图生成（Pillow）。
 
-Mock provider 用它生成「看起来像那么回事」的服装图 / 面料图 / 设计图，
+测试用 fake provider 用它生成「看起来像那么回事」的服装图 / 面料图 / 设计图，
 使得整条流水线无需任何外部素材或网络即可跑通。
 
 注意：绘制文字只用 ASCII，避免默认字体无法渲染中文。
@@ -31,10 +31,7 @@ def _hsl(h: float, s: float, l: float) -> tuple[int, int, int]:
 
 
 def _font(size: int) -> ImageFont.ImageFont:
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:  # 旧版 Pillow
-        return ImageFont.load_default()
+    return ImageFont.load_default(size=size)
 
 
 def _gradient(
@@ -199,7 +196,7 @@ def _draw_design(img: Image.Image, rng: random.Random, label: str) -> None:
     )
     draw.text(
         (size * 0.04, size * 0.90),
-        "MOCK GENERATED",
+        "PLACEHOLDER",
         font=_font(int(size * 0.03)),
         fill=(255, 255, 255, 190),
     )

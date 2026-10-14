@@ -38,7 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </Link>
             </nav>
             <span className="ml-auto text-xs text-slate-500">
-              默认 Mock 模式 · 可在「能力配置」切换真实模型
+              首次使用请在「能力配置」中选择实现并填写端点
             </span>
           </div>
         </header>

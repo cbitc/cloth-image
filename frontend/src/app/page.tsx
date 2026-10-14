@@ -20,7 +20,7 @@ export default function SearchPage() {
   const [searching, setSearching] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<string>("");
+  const [provider, setProvider] = useState<string>("");
 
   const [designIdea, setDesignIdea] = useState("");
   const [autoGenerate, setAutoGenerate] = useState(false);
@@ -31,7 +31,7 @@ export default function SearchPage() {
       .listSites()
       .then((data) => {
         setSites(data.sites);
-        setMode(data.mode);
+        setProvider(data.provider);
         setSelectedSites(data.sites.slice(0, 1).map((site) => site.id));
       })
       .catch((err: Error) => setError(err.message));
@@ -96,7 +96,7 @@ export default function SearchPage() {
   return (
     <div className="space-y-5 pb-32">
       <Card>
-        <SectionTitle hint={mode ? `provider: ${mode}` : undefined}>
+        <SectionTitle hint={provider ? `provider: ${provider}` : undefined}>
           1 · 搜索服装图
         </SectionTitle>
 

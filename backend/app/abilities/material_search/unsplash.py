@@ -7,7 +7,7 @@
 - 检索词优先用 `material_en`（Unsplash 以英文效果最好），否则回退词表里的英文关键词
   （`taxonomy.build_material_query`）。
 - **每个 tag 一次请求**；demo 应用限 50 次/小时 → 4 个 tag 约 4 次/任务。
-- Unsplash 不返回相关性分数：`similarity` 用**排名代理**（与 mock 同一公式），仅供排序展示。
+- Unsplash 不返回相关性分数：`similarity` 用**排名代理**（按名次递减），仅供排序展示。
 - 官方要求热链 + 署名：原图页写进 `source_url`。
 """
 
@@ -23,7 +23,7 @@ DEFAULT_QUERY_SUFFIX = "fabric texture close up"
 
 
 def _similarity(rank_in_tag: int, tag_rank: int) -> float:
-    """Unsplash 无相关性分数 → 用排名代理（与 mock 公式一致，便于 UI 展示）。"""
+    """Unsplash 无相关性分数 → 用排名代理（按名次递减，便于 UI 展示）。"""
     return round(max(0.35, 0.96 - 0.05 * rank_in_tag - 0.02 * tag_rank), 2)
 
 

@@ -23,6 +23,7 @@ from app.settings_spec import (
 STATE_LABEL = {
     "ready": "可用",
     "missing_key": "缺少配置",
+    "unconfigured": "未配置",
 }
 
 
@@ -60,10 +61,10 @@ def ability_status(
 
     for spec in ABILITY_SPECS:
         name = spec["ability"]
-        provider = abilities.providers.get(name, "mock")
+        provider = abilities.providers.get(name, "")
 
-        if provider == "mock":
-            state, state_label = "ready", "Mock"
+        if not provider:
+            state, state_label = "unconfigured", STATE_LABEL["unconfigured"]
         else:
             has_key = bool(getattr(ability, f"{name}_api_key", ""))
             state = "ready" if has_key else "missing_key"
@@ -75,7 +76,6 @@ def ability_status(
                 "label": spec["label"],
                 "signature": spec["signature"],
                 "provider": provider,
-                "real_implemented": spec["real_implemented"],
                 "options": spec["options"],
                 "state": state,
                 "state_label": state_label,

@@ -5,21 +5,17 @@ from __future__ import annotations
 import pytest
 
 from app import settings_store
-from app.abilities.registry import reset_abilities_cache
-from app.config import apply_overrides
 from app.db.session import SessionLocal
 from app.settings_spec import SettingsValidationError, coerce, validate_patch
 
 
 @pytest.fixture(autouse=True)
-def _restore_overrides():
-    """用例前后都清空覆盖项，避免污染其它测试（覆盖项是模块级全局状态）。"""
+def _clean_db_overrides():
+    """每个用例前后清空 DB 里的覆盖项，避免用例间污染（能力默认由 conftest 指向 fake）。"""
 
     def clean() -> None:
         with SessionLocal() as db:
             settings_store.clear_all(db)
-        apply_overrides({})
-        reset_abilities_cache()
 
     clean()
     yield
@@ -43,7 +39,7 @@ def test_get_returns_structured_config(client) -> None:
 
     # 非密钥字段给真值，密钥字段只给状态
     assert body["values"]["image_size"] == "1024x1024"
-    assert body["values"]["material_identifier_provider"] == "mock"
+    assert body["values"]["material_identifier_provider"] == "fake"
     assert body["secrets"]["material_identifier_api_key"] == {
         "configured": False,
         "overridden": False,
@@ -52,18 +48,17 @@ def test_get_returns_structured_config(client) -> None:
 
     assert len(body["ability_status"]) == 4
     assert body["abilities"] == {
-        "clothing_search": "mock",
-        "material_identifier": "mock",
-        "material_search": "mock",
-        "design_generator": "mock",
+        "clothing_search": "fake",
+        "material_identifier": "fake",
+        "material_search": "fake",
+        "design_generator": "fake",
     }
 
 
 def test_material_search_uses_unsplash_after_configuring(client) -> None:
     body = client.get("/api/settings").json()
     material = _ability(body, "material_search")
-    assert material["real_implemented"] is True
-    assert material["options"] == ["mock", "unsplash"]
+    assert material["options"] == ["unsplash"]
 
     names = {field["name"] for group in body["groups"] for field in group["fields"]}
     assert {"material_search_provider", "material_search_api_key"} <= names
@@ -83,8 +78,7 @@ def test_material_search_uses_unsplash_after_configuring(client) -> None:
 def test_clothing_search_uses_unsplash_after_configuring(client) -> None:
     body = client.get("/api/settings").json()
     web = _ability(body, "clothing_search")
-    assert web["real_implemented"] is True
-    assert web["options"] == ["mock", "unsplash"]
+    assert web["options"] == ["unsplash"]
 
     names = {field["name"] for group in body["groups"] for field in group["fields"]}
     assert {"clothing_search_provider", "clothing_search_api_key"} <= names
@@ -103,7 +97,7 @@ def test_clothing_search_uses_unsplash_after_configuring(client) -> None:
 
 def test_sites_follow_active_provider(client) -> None:
     """搜索页站点列表跟随当前 provider：Unsplash 不支持站点过滤。"""
-    assert client.get("/api/search/sites").json()["sites"][0]["id"] == "mock-shop"
+    assert client.get("/api/search/sites").json()["sites"][0]["id"] == "fake-shop"
 
     client.put(
         "/api/settings", json={"values": {"clothing_search_provider": "unsplash"}}
@@ -144,7 +138,7 @@ def test_environment_variable_does_not_affect_ability_config(
     monkeypatch.setenv("MATERIAL_IDENTIFIER_PROVIDER", "openai_compatible")
 
     body = client.get("/api/settings").json()
-    assert body["abilities"]["material_identifier"] == "mock"
+    assert body["abilities"]["material_identifier"] == "fake"
 
 
 def test_override_applies_immediately(client) -> None:
@@ -212,7 +206,7 @@ def test_delete_resets_everything(client) -> None:
 
     assert body["removed"] == 2
     assert body["overridden"] == []
-    assert body["abilities"]["material_identifier"] == "mock"
+    assert body["abilities"]["material_identifier"] == ""
 
 
 # --------------------------------------------------------------------------- #
@@ -290,7 +284,11 @@ def test_coerce_handles_types() -> None:
     assert coerce("provider_timeout_s", "12.5") == 12.5
     assert coerce("prompt_extend", "true") is True
     assert coerce("prompt_extend", 0) is False
-    assert coerce("material_identifier_provider", " mock ") == "mock"
+    assert coerce("clothing_search_provider", " unsplash ") == "unsplash"
+    assert (
+        coerce("material_identifier_provider", " openai_compatible ")
+        == "openai_compatible"
+    )
 
     with pytest.raises(SettingsValidationError):
         coerce("image_max_refs", "abc")

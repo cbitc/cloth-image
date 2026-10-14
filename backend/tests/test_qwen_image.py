@@ -75,7 +75,6 @@ def test_parses_escaped_json_string_data() -> None:
 
     assert len(results) == 1
     assert results[0].external_url == _IMAGE_URL
-    assert results[0].is_mock is False
     assert results[0].model == "qwen-image-3.0"
 
     body = calls[0]

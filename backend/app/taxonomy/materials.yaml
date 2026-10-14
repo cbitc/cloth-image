@@ -1,6 +1,6 @@
 # 受控材质词表（taxonomy）
 # 用途：
-#   1) Mock 材质识别从中确定性抽取 tag
+#   1) 测试用 fake 材质识别从中确定性抽取 tag
 #   2) 材质图检索用 keywords 构造 query
 #   3) 真实 VLM 识别时作为「可选标签集合」注入 prompt，保证 tag 可直接用于检索
 #
