@@ -1,0 +1,497 @@
+# 受控材质词表（taxonomy）
+# 用途：
+#   1) Mock 材质识别从中确定性抽取 tag
+#   2) 材质图检索用 keywords 构造 query
+#   3) 真实 VLM 识别时作为「可选标签集合」注入 prompt，保证 tag 可直接用于检索
+#
+# 字段：material 中文名 / material_en 英文名 / category 分类 /
+#       gloss 光泽（低|中|高） / drape 垂坠（低|中|高） / keywords 检索词（中英）
+
+- {
+    material: 棉,
+    material_en: Cotton,
+    category: 天然纤维,
+    gloss: 低,
+    drape: 中,
+    keywords: ["cotton fabric texture close-up", "棉 面料 纹理 特写"],
+  }
+- {
+    material: 亚麻,
+    material_en: Linen,
+    category: 天然纤维,
+    gloss: 低,
+    drape: 中,
+    keywords: ["linen fabric texture close-up", "亚麻 面料 纹理"],
+  }
+- {
+    material: 苎麻,
+    material_en: Ramie,
+    category: 天然纤维,
+    gloss: 中,
+    drape: 低,
+    keywords: ["ramie fabric texture", "苎麻 面料"],
+  }
+- {
+    material: 羊毛,
+    material_en: Wool,
+    category: 天然纤维,
+    gloss: 低,
+    drape: 中,
+    keywords: ["wool fabric texture close-up", "羊毛 面料 纹理"],
+  }
+- {
+    material: 羊绒,
+    material_en: Cashmere,
+    category: 天然纤维,
+    gloss: 中,
+    drape: 高,
+    keywords: ["cashmere fabric texture", "羊绒 面料"],
+  }
+- {
+    material: 马海毛,
+    material_en: Mohair,
+    category: 天然纤维,
+    gloss: 中,
+    drape: 中,
+    keywords: ["mohair fabric texture", "马海毛 面料"],
+  }
+- {
+    material: 羊驼毛,
+    material_en: Alpaca,
+    category: 天然纤维,
+    gloss: 中,
+    drape: 中,
+    keywords: ["alpaca wool texture", "羊驼毛 面料"],
+  }
+- {
+    material: 桑蚕丝,
+    material_en: Mulberry Silk,
+    category: 天然纤维,
+    gloss: 高,
+    drape: 高,
+    keywords: ["mulberry silk fabric texture", "桑蚕丝 面料 光泽"],
+  }
+- {
+    material: 柞蚕丝,
+    material_en: Tussah Silk,
+    category: 天然纤维,
+    gloss: 高,
+    drape: 中,
+    keywords: ["tussah silk texture", "柞蚕丝 面料"],
+  }
+- {
+    material: 驼毛,
+    material_en: Camel Hair,
+    category: 天然纤维,
+    gloss: 低,
+    drape: 中,
+    keywords: ["camel hair fabric", "驼毛 面料"],
+  }
+- {
+    material: 粘胶,
+    material_en: Viscose,
+    category: 再生纤维,
+    gloss: 中,
+    drape: 高,
+    keywords: ["viscose rayon fabric texture", "粘胶 人造丝 面料"],
+  }
+- {
+    material: 莫代尔,
+    material_en: Modal,
+    category: 再生纤维,
+    gloss: 低,
+    drape: 高,
+    keywords: ["modal fabric texture", "莫代尔 面料"],
+  }
+- {
+    material: 莱赛尔,
+    material_en: Lyocell,
+    category: 再生纤维,
+    gloss: 中,
+    drape: 高,
+    keywords: ["lyocell tencel fabric texture", "莱赛尔 天丝 面料"],
+  }
+- {
+    material: 醋酸,
+    material_en: Acetate,
+    category: 再生纤维,
+    gloss: 高,
+    drape: 高,
+    keywords: ["acetate satin fabric texture", "醋酸 面料 光泽"],
+  }
+- {
+    material: 铜氨丝,
+    material_en: Cupro,
+    category: 再生纤维,
+    gloss: 高,
+    drape: 高,
+    keywords: ["cupro fabric texture", "铜氨丝 面料"],
+  }
+- {
+    material: 竹纤维,
+    material_en: Bamboo Fiber,
+    category: 再生纤维,
+    gloss: 中,
+    drape: 高,
+    keywords: ["bamboo fiber fabric texture", "竹纤维 面料"],
+  }
+- {
+    material: 涤纶,
+    material_en: Polyester,
+    category: 化学纤维,
+    gloss: 中,
+    drape: 中,
+    keywords: ["polyester fabric texture close-up", "涤纶 面料 纹理"],
+  }
+- {
+    material: 锦纶,
+    material_en: Nylon,
+    category: 化学纤维,
+    gloss: 高,
+    drape: 中,
+    keywords: ["nylon fabric texture", "锦纶 尼龙 面料"],
+  }
+- {
+    material: 腈纶,
+    material_en: Acrylic,
+    category: 化学纤维,
+    gloss: 中,
+    drape: 中,
+    keywords: ["acrylic knit fabric texture", "腈纶 面料"],
+  }
+- {
+    material: 氨纶,
+    material_en: Spandex,
+    category: 化学纤维,
+    gloss: 中,
+    drape: 高,
+    keywords: ["spandex elastane fabric texture", "氨纶 面料 弹力"],
+  }
+- {
+    material: 丙纶,
+    material_en: Polypropylene,
+    category: 化学纤维,
+    gloss: 中,
+    drape: 中,
+    keywords: ["polypropylene fabric texture", "丙纶 面料"],
+  }
+- {
+    material: 牛皮,
+    material_en: Cowhide Leather,
+    category: 皮革,
+    gloss: 中,
+    drape: 低,
+    keywords: ["cowhide leather texture", "牛皮 皮革 纹理"],
+  }
+- {
+    material: 羊皮,
+    material_en: Sheepskin Leather,
+    category: 皮革,
+    gloss: 中,
+    drape: 高,
+    keywords: ["sheepskin leather texture", "羊皮 皮革"],
+  }
+- {
+    material: 猪皮,
+    material_en: Pigskin Leather,
+    category: 皮革,
+    gloss: 低,
+    drape: 低,
+    keywords: ["pigskin leather texture", "猪皮 皮革"],
+  }
+- {
+    material: PU皮,
+    material_en: PU Leather,
+    category: 皮革,
+    gloss: 高,
+    drape: 低,
+    keywords: ["pu faux leather texture", "PU皮 人造革"],
+  }
+- {
+    material: PVC革,
+    material_en: PVC Leather,
+    category: 皮革,
+    gloss: 高,
+    drape: 低,
+    keywords: ["pvc leather texture", "PVC 革 面料"],
+  }
+- {
+    material: 麂皮绒,
+    material_en: Suede,
+    category: 皮革,
+    gloss: 低,
+    drape: 中,
+    keywords: ["suede fabric texture", "麂皮绒 面料"],
+  }
+- {
+    material: 漆皮,
+    material_en: Patent Leather,
+    category: 皮革,
+    gloss: 高,
+    drape: 低,
+    keywords: ["patent leather texture", "漆皮 面料"],
+  }
+- {
+    material: 蛇纹革,
+    material_en: Snakeskin Leather,
+    category: 皮革,
+    gloss: 中,
+    drape: 低,
+    keywords: ["snakeskin leather texture", "蛇纹 皮革"],
+  }
+- {
+    material: 针织,
+    material_en: Knit,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 中,
+    keywords: ["knit fabric texture", "针织 面料 纹理"],
+  }
+- {
+    material: 罗纹,
+    material_en: Rib Knit,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 中,
+    keywords: ["rib knit fabric texture", "罗纹 面料"],
+  }
+- {
+    material: 毛圈布,
+    material_en: Terry Cloth,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 低,
+    keywords: ["terry cloth texture", "毛圈布 面料"],
+  }
+- {
+    material: 卫衣布,
+    material_en: French Terry,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 低,
+    keywords: ["french terry fabric", "卫衣布 面料"],
+  }
+- {
+    material: 双面呢,
+    material_en: Double-faced Wool,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 中,
+    keywords: ["double faced wool coating", "双面呢 面料"],
+  }
+- {
+    material: 提花,
+    material_en: Jacquard,
+    category: 针织梭织,
+    gloss: 中,
+    drape: 中,
+    keywords: ["jacquard fabric texture", "提花 面料"],
+  }
+- {
+    material: 蕾丝,
+    material_en: Lace,
+    category: 针织梭织,
+    gloss: 中,
+    drape: 高,
+    keywords: ["lace fabric texture close-up", "蕾丝 面料 纹理"],
+  }
+- {
+    material: 网眼布,
+    material_en: Mesh,
+    category: 针织梭织,
+    gloss: 中,
+    drape: 高,
+    keywords: ["mesh fabric texture", "网眼布 网布"],
+  }
+- {
+    material: 雪纺,
+    material_en: Chiffon,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 高,
+    keywords: ["chiffon fabric texture", "雪纺 面料"],
+  }
+- {
+    material: 欧根纱,
+    material_en: Organza,
+    category: 针织梭织,
+    gloss: 中,
+    drape: 低,
+    keywords: ["organza fabric texture", "欧根纱 面料"],
+  }
+- {
+    material: 塔夫绸,
+    material_en: Taffeta,
+    category: 针织梭织,
+    gloss: 高,
+    drape: 中,
+    keywords: ["taffeta fabric texture", "塔夫绸 面料"],
+  }
+- {
+    material: 缎面,
+    material_en: Satin,
+    category: 针织梭织,
+    gloss: 高,
+    drape: 高,
+    keywords: ["satin fabric texture close-up", "缎面 面料 光泽"],
+  }
+- {
+    material: 贡缎,
+    material_en: Sateen,
+    category: 针织梭织,
+    gloss: 高,
+    drape: 中,
+    keywords: ["sateen fabric texture", "贡缎 面料"],
+  }
+- {
+    material: 斜纹,
+    material_en: Twill,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 中,
+    keywords: ["twill fabric texture", "斜纹 面料"],
+  }
+- {
+    material: 灯芯绒,
+    material_en: Corduroy,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 低,
+    keywords: ["corduroy fabric texture close-up", "灯芯绒 面料 纹理"],
+  }
+- {
+    material: 牛仔,
+    material_en: Denim,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 低,
+    keywords: ["denim fabric texture close-up", "牛仔 丹宁 面料"],
+  }
+- {
+    material: 法兰绒,
+    material_en: Flannel,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 中,
+    keywords: ["flannel fabric texture", "法兰绒 面料"],
+  }
+- {
+    material: 粗花呢,
+    material_en: Tweed,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 低,
+    keywords: ["tweed fabric texture", "粗花呢 花呢 面料"],
+  }
+- {
+    material: 泡泡纱,
+    material_en: Seersucker,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 中,
+    keywords: ["seersucker fabric texture", "泡泡纱 面料"],
+  }
+- {
+    material: 府绸,
+    material_en: Poplin,
+    category: 针织梭织,
+    gloss: 中,
+    drape: 中,
+    keywords: ["poplin fabric texture", "府绸 面料"],
+  }
+- {
+    material: 华达呢,
+    material_en: Gabardine,
+    category: 针织梭织,
+    gloss: 中,
+    drape: 中,
+    keywords: ["gabardine fabric texture", "华达呢 面料"],
+  }
+- {
+    material: 天鹅绒,
+    material_en: Velvet,
+    category: 针织梭织,
+    gloss: 高,
+    drape: 高,
+    keywords: ["velvet fabric texture close-up", "天鹅绒 丝绒 面料"],
+  }
+- {
+    material: 丝绒,
+    material_en: Velour,
+    category: 针织梭织,
+    gloss: 高,
+    drape: 高,
+    keywords: ["velour fabric texture", "丝绒 面料"],
+  }
+- {
+    material: 摇粒绒,
+    material_en: Fleece,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 中,
+    keywords: ["polar fleece texture", "摇粒绒 抓绒 面料"],
+  }
+- {
+    material: 复合面料,
+    material_en: Bonded Fabric,
+    category: 功能面料,
+    gloss: 中,
+    drape: 低,
+    keywords: ["bonded softshell fabric", "复合面料 软壳"],
+  }
+- {
+    material: 涂层面料,
+    material_en: Coated Fabric,
+    category: 功能面料,
+    gloss: 高,
+    drape: 低,
+    keywords: ["coated water repellent fabric", "涂层面料 防风 防水"],
+  }
+- {
+    material: 记忆面料,
+    material_en: Memory Fabric,
+    category: 功能面料,
+    gloss: 中,
+    drape: 中,
+    keywords: ["memory fabric texture", "记忆面料"],
+  }
+- {
+    material: 吸湿排汗,
+    material_en: Moisture Wicking,
+    category: 功能面料,
+    gloss: 中,
+    drape: 中,
+    keywords: ["moisture wicking sports fabric", "吸湿排汗 功能面料"],
+  }
+- {
+    material: 混纺,
+    material_en: Blended Fabric,
+    category: 混纺,
+    gloss: 中,
+    drape: 中,
+    keywords: ["blended fabric texture", "混纺 面料"],
+  }
+- {
+    material: 棉麻混纺,
+    material_en: Cotton-Linen Blend,
+    category: 混纺,
+    gloss: 低,
+    drape: 中,
+    keywords: ["cotton linen blend texture", "棉麻 混纺"],
+  }
+- {
+    material: 毛呢,
+    material_en: Wool Coating,
+    category: 针织梭织,
+    gloss: 低,
+    drape: 低,
+    keywords: ["wool coating fabric texture", "毛呢 面料"],
+  }
+- {
+    material: 皮革拼接,
+    material_en: Leather Panel,
+    category: 皮革,
+    gloss: 中,
+    drape: 低,
+    keywords: ["leather panel garment detail", "皮革 拼接 服装"],
+  }

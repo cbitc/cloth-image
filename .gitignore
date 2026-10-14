@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# 本地数据
+backend/.data/
+*.sqlite3
+
+# Node
+node_modules/
+.next/
+out/
+npm-debug.log*
+
+# 环境变量
+.env
+.env.local
+
+# 编辑器
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
