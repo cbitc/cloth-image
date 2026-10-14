@@ -1,5 +1,6 @@
-"""材质图检索能力（当前仅 mock 实现）。"""
+"""材质图检索能力。"""
 
 from app.abilities.material_search.mock import MockMaterialImageSearchProvider
+from app.abilities.material_search.unsplash import UnsplashMaterialSearchProvider
 
-__all__ = ["MockMaterialImageSearchProvider"]
+__all__ = ["MockMaterialImageSearchProvider", "UnsplashMaterialSearchProvider"]

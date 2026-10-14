@@ -11,10 +11,10 @@
 
 | 能力 | 签名 | 当前实现 |
 |---|---|---|
-| 搜索服装图 | `searchClothingImages :: [网站列表] -> [服装图片列表]` | `MockClothingSearchProvider`（确定性占位服装图） |
-| 识别服装材质 | `identifyClothingMaterial :: 服装图片 -> [材质tag列表]` | `MockMaterialIdentifier`（内容哈希 → tag + 置信度 + 依据） |
-| 查找材质图 | `searchMaterialImages :: [材质tag列表] -> [材质图片列表]` | `MockMaterialImageSearchProvider`（按 tag 生成面料小样） |
-| 图生图生成设计图 | `generateDesignImage :: ([材质图片], 设计想法) -> [设计图]` | `MockDesignGenerator`（真实组装 prompt，返回候选图） |
+| 搜索服装图 | `searchClothingImages :: [网站列表] -> [服装图片列表]` | `MockClothingSearchProvider` / `UnsplashClothingSearchProvider` |
+| 识别服装材质 | `identifyClothingMaterial :: 服装图片 -> [材质tag列表]` | `MockMaterialIdentifier` / `OpenAICompatibleVLMIdentifier` |
+| 查找材质图 | `searchMaterialImages :: [材质tag列表] -> [材质图片列表]` | `MockMaterialImageSearchProvider` / `UnsplashMaterialSearchProvider` |
+| 图生图生成设计图 | `generateDesignImage :: ([材质图片], 设计想法) -> [设计图]` | `MockDesignGenerator` / `OpenAICompatibleImageGenerator` |
 
 四个能力的契约定义在 `backend/app/abilities/base.py`，Mock 与真实实现**签名一致、可热插拔**。
 
@@ -116,9 +116,10 @@ cloth-image/
 │     │  ├─ mock_images.py     #   Pillow 确定性占位图
 │     │  ├─ prompting.py       #   图生图 prompt 组装
 │     │  ├─ registry.py        #   按能力注入实现（混合 mock / 真实）
-│     │  ├─ clothing_search/{mock.py}
+│     │  ├─ unsplash_client.py #   Unsplash 共享客户端（鉴权 / 分页 / 归一化）
+│     │  ├─ clothing_search/{mock.py, unsplash.py}
 │     │  ├─ material_identify/{mock.py, openai_compatible_vlm.py}
-│     │  ├─ material_search/{mock.py}
+│     │  ├─ material_search/{mock.py, unsplash.py}
 │     │  └─ design_generate/{mock.py, openai_compatible_image.py}
 │     ├─ taxonomy/materials.yaml  # 受控材质词表（60 条，中英双语）
 │     ├─ tasks/                # 状态机 / 编排器 / 分发器 / worker / 持久化 / 序列化 / fetch(下载+镜像)
@@ -200,11 +201,11 @@ npm run dev
 
 打开 `http://localhost:3000/settings`：
 
-- **两个有真实实现的能力**（识别 / 生图）各自显式选择实现，且仅当选中真实实现时才展开
-  端点 Base URL / API Key / 模型名：
+- **四个能力**各自显式选择实现，且仅当选中真实实现时才展开配置项：
+  - 搜索服装图：`mock` / `unsplash`（Unsplash 图库检索，只需 Access Key）
+  - 查找材质图：`mock` / `unsplash`（Unsplash 面料特写，每个材质 tag 一次请求）
   - 识别：`mock` / `openai_compatible`（OpenAI 兼容 `/chat/completions`）
   - 生图：`mock` / `openai_compatible_image`（OpenAI 兼容 `/images/generations`）
-- **搜索类能力**（搜索服装图 / 查找材质图）当前只有 mock，页面直接标注「仅 Mock（暂无真实实现）」
 - 调整生图参数、识别参数、流水线参数与 HTTP 超时/重试
 - 查看识别缓存的命中数与估算省下的 token，并可一键清空
 
@@ -283,9 +284,10 @@ cd backend
 （推荐，立即生效且持久化）逐项选择实现即可；provider 名写错会在**构造能力时立即报错**，
 启动日志还会提示端点 / Key / 模型是否缺失。
 
+- 搜索服装图：`mock` / `unsplash`（只需 Unsplash Access Key）
 - 识别：`mock` / `openai_compatible`
 - 生图：`mock` / `openai_compatible_image`
-- 搜索类：仅 `mock`
+- 查找材质图：`mock` / `unsplash`（可与服装图共用同一个 Access Key）
 
 > 环境变量**不再**参与能力配置（这是刻意去掉的兼容层）。
 
@@ -310,7 +312,24 @@ cd backend
 - 生图返回的是 **OSS 临时地址** → 编排器会下载并**镜像到自有存储**
 - 外部服务**访问不到**我们的 `localhost/media` 地址 → 送模型一律用 base64 data URL
 
-### 9.3 联调探针
+### 9.3 已验证示例：Unsplash（服装图搜索）
+
+只需 **Access Key**（`Authorization: Client-ID <key>`）；Secret Key 仅用于 OAuth，用不到。
+
+- 端点：`GET https://api.unsplash.com/search/photos?query=...&per_page=30&page=1`
+- 返回 `results[].urls.{regular,small}`（**官方要求热链**）+ `links.html` + `user.name`，
+  我们把摄影师与 Unsplash 署名写进 `title`、原图页存进 `page_url`；图片仍由编排器镜像落盘
+- 单页最多 30 条，超出会自动翻页（搜索页 `count` 上限 60）
+- **不支持按站点过滤**，`sites` 被忽略；搜索页站点列表会随 provider 变为「Unsplash（不限站点）」
+- demo 应用限 **50 次/小时**（响应头 `X-Ratelimit-Remaining`）；超限抛 `ProviderRateLimitError`，
+  接口以 **502** 返回可读原因
+- **两个能力共用**同一份客户端（`abilities/unsplash_client.py`）与同一个 Access Key：
+  服装图按关键词直接搜；材质图把每个材质 tag 转成 `{material_en} fabric texture close up`
+  各搜一次（词表里没有英文名时回退 `taxonomy.build_material_query`）
+- 材质图的 `similarity` 是**排名代理**（Unsplash 不返回相关性分数），仅用于排序展示
+- 提示：Unsplash 以英文关键词效果最佳，中文词命中率有限
+
+### 9.4 联调探针
 
 ```bash
 cd backend
@@ -320,13 +339,17 @@ python -m app.tools.probe --skip-image     # 只探识别
 
 会打印生效的 provider、识别出的 tag 与依据、token 用量、生图返回的 URL。
 
-### 9.4 还没实现的 provider
+### 9.5 新增一个 provider
 
-搜索类能力（搜索服装图 / 查找材质图）目前只有 mock 实现，设置页已明确标注「仅 Mock（暂无真实实现）」。
+四个能力目前都已有 mock + 真实实现。要再接一家：
 
-要新增真实实现：在 `abilities/<能力>/` 下加适配器类，再到 `settings_spec.py` 的 `ABILITY_SPECS`
-把该能力的 `options` 加上新 provider 名、`real_implemented` 设为 `True`，
-并在 `abilities/registry.py` 对应 builder 里分支即可（UI 与校验会自动跟随 spec）。
+1. 在 `abilities/<能力>/` 下加适配器类（实现对应 Protocol）；
+2. `settings_spec.py` 的 `ABILITY_SPECS` 把该能力的 `options` 加上新 provider 名、
+   `fields` 补上需要的配置项（`real_implemented=True` 时 UI 会自动展开）；
+3. `abilities/ability_config.py` 加上对应字段（形如 `{ability}_api_key`）；
+4. `abilities/registry.py` 的 builder 里加分支。
+
+UI、校验与告警（`config_warnings`）都会自动跟随 spec，无需改前端。
 
 **各能力推荐路线**（详见 `AI服装辅助设计方案.md`）：
 

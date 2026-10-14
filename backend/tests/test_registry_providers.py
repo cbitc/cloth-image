@@ -9,7 +9,10 @@ from __future__ import annotations
 import pytest
 
 from app.ability_config import AbilitySettings
-from app.abilities.clothing_search import MockClothingSearchProvider
+from app.abilities.clothing_search import (
+    MockClothingSearchProvider,
+    UnsplashClothingSearchProvider,
+)
 from app.abilities.design_generate import (
     MockDesignGenerator,
     OpenAICompatibleImageGenerator,
@@ -18,7 +21,10 @@ from app.abilities.material_identify import (
     MockMaterialIdentifier,
     OpenAICompatibleVLMIdentifier,
 )
-from app.abilities.material_search import MockMaterialImageSearchProvider
+from app.abilities.material_search import (
+    MockMaterialImageSearchProvider,
+    UnsplashMaterialSearchProvider,
+)
 from app.abilities.registry import UnknownProvider, build_abilities, config_warnings
 from app.config import Settings
 
@@ -51,6 +57,24 @@ def _generator(**overrides) -> AbilitySettings:
     return AbilitySettings(**base)
 
 
+def _unsplash(**overrides) -> AbilitySettings:
+    base: dict = {
+        "clothing_search_provider": "unsplash",
+        "clothing_search_api_key": "test-access-key",
+    }
+    base.update(overrides)
+    return AbilitySettings(**base)
+
+
+def _unsplash_material(**overrides) -> AbilitySettings:
+    base: dict = {
+        "material_search_provider": "unsplash",
+        "material_search_api_key": "test-access-key",
+    }
+    base.update(overrides)
+    return AbilitySettings(**base)
+
+
 def test_all_mock_by_default() -> None:
     abilities = build_abilities(AbilitySettings(), _settings())
 
@@ -63,14 +87,36 @@ def test_all_mock_by_default() -> None:
     assert abilities.real_providers == []
 
 
-def test_search_abilities_are_always_mock() -> None:
-    """搜索类能力没有真实实现：即使其它能力切换，它们仍是 mock。"""
-    abilities = build_abilities(_identifier(), _settings())
+def test_material_search_can_use_unsplash() -> None:
+    abilities = build_abilities(_unsplash_material(), _settings())
 
-    assert abilities.providers["clothing_search"] == "mock"
-    assert abilities.providers["material_search"] == "mock"
-    assert isinstance(abilities.clothing_search, MockClothingSearchProvider)
-    assert isinstance(abilities.material_search, MockMaterialImageSearchProvider)
+    assert abilities.providers["material_search"] == "unsplash"
+    assert isinstance(abilities.material_search, UnsplashMaterialSearchProvider)
+    assert abilities.real_providers == ["material_search=unsplash"]
+
+
+def test_unsplash_material_missing_key_emits_warning() -> None:
+    ability = _unsplash_material(material_search_api_key="")
+    warnings = config_warnings(build_abilities(ability, _settings()), ability)
+
+    assert any("查找材质图" in warning for warning in warnings)
+    assert any("API Key" in warning for warning in warnings)
+
+
+def test_clothing_search_can_use_unsplash() -> None:
+    abilities = build_abilities(_unsplash(), _settings())
+
+    assert abilities.providers["clothing_search"] == "unsplash"
+    assert isinstance(abilities.clothing_search, UnsplashClothingSearchProvider)
+    assert abilities.real_providers == ["clothing_search=unsplash"]
+
+
+def test_unsplash_missing_key_emits_warning() -> None:
+    ability = _unsplash(clothing_search_api_key="")
+    warnings = config_warnings(build_abilities(ability, _settings()), ability)
+
+    assert any("搜索服装图" in warning for warning in warnings)
+    assert any("API Key" in warning for warning in warnings)
 
 
 def test_switching_one_ability_yields_mixed_mode() -> None:

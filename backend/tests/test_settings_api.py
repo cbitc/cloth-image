@@ -59,19 +59,59 @@ def test_get_returns_structured_config(client) -> None:
     }
 
 
-def test_search_abilities_are_mock_only(client) -> None:
-    """搜索类能力没有真实实现：只暴露 mock，且不提供 provider 选择字段。"""
+def test_material_search_uses_unsplash_after_configuring(client) -> None:
     body = client.get("/api/settings").json()
+    material = _ability(body, "material_search")
+    assert material["real_implemented"] is True
+    assert material["options"] == ["mock", "unsplash"]
 
-    web = _ability(body, "clothing_search")
-    assert web["real_implemented"] is False
-    assert web["options"] == ["mock"]
-    assert web["state"] == "ready"
-    assert web["state_label"] == "Mock"
-
-    # 没有 provider 选择字段，也没有 provider 专属字段
     names = {field["name"] for group in body["groups"] for field in group["fields"]}
-    assert not any(name.startswith("clothing_search_") for name in names)
+    assert {"material_search_provider", "material_search_api_key"} <= names
+
+    client.put(
+        "/api/settings", json={"values": {"material_search_provider": "unsplash"}}
+    )
+    body = client.get("/api/settings").json()
+    assert _ability(body, "material_search")["state"] == "missing_key"
+    assert any("查找材质图" in warning for warning in body["warnings"])
+
+    client.put("/api/settings", json={"values": {"material_search_api_key": "sk-x"}})
+    body = client.get("/api/settings").json()
+    assert _ability(body, "material_search")["state"] == "ready"
+
+
+def test_clothing_search_uses_unsplash_after_configuring(client) -> None:
+    body = client.get("/api/settings").json()
+    web = _ability(body, "clothing_search")
+    assert web["real_implemented"] is True
+    assert web["options"] == ["mock", "unsplash"]
+
+    names = {field["name"] for group in body["groups"] for field in group["fields"]}
+    assert {"clothing_search_provider", "clothing_search_api_key"} <= names
+
+    client.put(
+        "/api/settings", json={"values": {"clothing_search_provider": "unsplash"}}
+    )
+    body = client.get("/api/settings").json()
+    assert _ability(body, "clothing_search")["state"] == "missing_key"
+    assert any("API Key" in warning for warning in body["warnings"])
+
+    client.put("/api/settings", json={"values": {"clothing_search_api_key": "sk-x"}})
+    body = client.get("/api/settings").json()
+    assert _ability(body, "clothing_search")["state"] == "ready"
+
+
+def test_sites_follow_active_provider(client) -> None:
+    """搜索页站点列表跟随当前 provider：Unsplash 不支持站点过滤。"""
+    assert client.get("/api/search/sites").json()["sites"][0]["id"] == "mock-shop"
+
+    client.put(
+        "/api/settings", json={"values": {"clothing_search_provider": "unsplash"}}
+    )
+    body = client.get("/api/search/sites").json()
+
+    assert body["provider"] == "unsplash"
+    assert [site["id"] for site in body["sites"]] == ["unsplash"]
 
 
 def test_ability_status_flags_missing_key(client) -> None:

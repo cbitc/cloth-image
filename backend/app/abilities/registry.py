@@ -32,16 +32,40 @@ class UnknownProvider(ValueError):
         self.name = name
 
 
-def _build_clothing_search() -> Any:
-    from app.abilities.clothing_search import MockClothingSearchProvider
+def _build_clothing_search(
+    name: str, ability: AbilitySettings, settings: Settings
+) -> Any:
+    if name == "mock":
+        from app.abilities.clothing_search import MockClothingSearchProvider
 
-    return MockClothingSearchProvider()
+        return MockClothingSearchProvider()
+    if name == "unsplash":
+        from app.abilities.clothing_search import UnsplashClothingSearchProvider
+
+        return UnsplashClothingSearchProvider(
+            access_key=ability.clothing_search_api_key,
+            timeout_s=settings.provider_timeout_s,
+            max_retries=settings.provider_max_retries,
+        )
+    raise UnknownProvider("clothing_search", name, {"mock", "unsplash"})
 
 
-def _build_material_search() -> Any:
-    from app.abilities.material_search import MockMaterialImageSearchProvider
+def _build_material_search(
+    name: str, ability: AbilitySettings, settings: Settings
+) -> Any:
+    if name == "mock":
+        from app.abilities.material_search import MockMaterialImageSearchProvider
 
-    return MockMaterialImageSearchProvider()
+        return MockMaterialImageSearchProvider()
+    if name == "unsplash":
+        from app.abilities.material_search import UnsplashMaterialSearchProvider
+
+        return UnsplashMaterialSearchProvider(
+            access_key=ability.material_search_api_key,
+            timeout_s=settings.provider_timeout_s,
+            max_retries=settings.provider_max_retries,
+        )
+    raise UnknownProvider("material_search", name, {"mock", "unsplash"})
 
 
 def _build_material_identifier(
@@ -104,30 +128,49 @@ def _compute_mode(providers: dict[str, str]) -> str:
 
 def build_abilities(ability: AbilitySettings, settings: Settings) -> Abilities:
     """纯函数版本，便于测试直接传配置对象而不依赖环境变量 / 数据库。"""
+    clothing_provider = _normalize(ability.clothing_search_provider)
+    material_provider = _normalize(ability.material_search_provider)
     identifier_provider = _normalize(ability.material_identifier_provider)
     generator_provider = _normalize(ability.design_generator_provider)
 
     providers = {
-        "clothing_search": "mock",
+        "clothing_search": clothing_provider,
         "material_identifier": identifier_provider,
-        "material_search": "mock",
+        "material_search": material_provider,
         "design_generator": generator_provider,
     }
 
     return Abilities(
-        clothing_search=_build_clothing_search(),
+        clothing_search=_build_clothing_search(clothing_provider, ability, settings),
         material_identifier=_build_material_identifier(
             identifier_provider, ability, settings
         ),
-        material_search=_build_material_search(),
+        material_search=_build_material_search(material_provider, ability, settings),
         design_generator=_build_design_generator(generator_provider, ability, settings),
         mode=_compute_mode(providers),
         providers=providers,
     )
 
 
+#: 各能力选中真实 provider 后必须填的字段（字段名 = f"{ability}_{suffix}"）
+_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
+    "clothing_search": ("api_key",),
+    "material_search": ("api_key",),
+    "material_identifier": ("base_url", "api_key", "model"),
+    "design_generator": ("base_url", "api_key", "model"),
+}
+
+_FIELD_LABEL = {
+    "base_url": "端点 Base URL",
+    "api_key": "API Key",
+    "model": "模型名",
+}
+
+
 def _missing_label(ability: str) -> str:
     return {
+        "clothing_search": "搜索服装图",
+        "material_search": "查找材质图",
         "material_identifier": "识别服装材质",
         "design_generator": "图生图生成设计图",
     }.get(ability, ability)
@@ -137,29 +180,14 @@ def config_warnings(abilities: Abilities, ability: AbilitySettings) -> list[str]
     """启动时提示：真实 provider 缺少端点 / Key / 模型。避免跑到一半才发现配错。"""
     warnings: list[str] = []
 
-    required = {
-        "material_identifier": (
-            ability.material_identifier_base_url,
-            ability.material_identifier_api_key,
-            ability.material_identifier_model,
-        ),
-        "design_generator": (
-            ability.design_generator_base_url,
-            ability.design_generator_api_key,
-            ability.design_generator_model,
-        ),
-    }
-
     for name, provider in sorted(abilities.providers.items()):
         if provider == "mock":
             continue
-        base_url, api_key, model = required.get(name, ("", "", ""))
-        if not base_url:
-            warnings.append(f"{_missing_label(name)} 未配置端点 Base URL，调用会失败")
-        if not api_key:
-            warnings.append(f"{_missing_label(name)} 未配置 API Key，调用会鉴权失败")
-        if not model:
-            warnings.append(f"{_missing_label(name)} 未配置模型名，调用会失败")
+        for suffix in _REQUIRED_FIELDS.get(name, ()):
+            if not getattr(ability, f"{name}_{suffix}", ""):
+                warnings.append(
+                    f"{_missing_label(name)} 未配置 {_FIELD_LABEL[suffix]}，调用会失败"
+                )
 
     return warnings
 

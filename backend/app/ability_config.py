@@ -24,6 +24,14 @@ from app.settings_spec import ABILITY_FIELD_NAMES
 class AbilitySettings(BaseModel):
     """能力直接相关的配置项。字段名与 `settings_spec.ABILITY_FIELD_NAMES` 一一对应。"""
 
+    # 搜索服装图
+    clothing_search_provider: str = "mock"
+    clothing_search_api_key: str = ""
+
+    # 查找材质图
+    material_search_provider: str = "mock"
+    material_search_api_key: str = ""
+
     # 识别服装材质
     material_identifier_provider: str = "mock"
     material_identifier_base_url: str = ""
