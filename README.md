@@ -216,6 +216,14 @@ npm run dev
 > 能访问该页的人都可以修改配置并**写入**密钥。仅限本机 / 内网使用；
 > 对外暴露前请设 `SETTINGS_WRITE_ENABLED=false`（只读查看）或先补上鉴权。
 
+### 6.2 常见问题
+
+- **界面报 `Failed to fetch`**：多半是后端没起来或请求打在了代理上。
+  `fetch` 只有在**连接层失败**或**响应缺 CORS 头**时才报这个（而不是 500）。
+  先看后端终端有没有 traceback；本机验证用 `curl.exe -s --noproxy "*" http://127.0.0.1:8000/api/health`。
+- **后端日志 `no such column: clothing_image.image_hash`**：旧版 `.data/app.db` 缺列。
+  启动时会自动补齐（`app/db/schema.py`，仅 SQLite）；也可直接删除 `.data/app.db` 重建。
+
 ---
 
 ## 7. API
