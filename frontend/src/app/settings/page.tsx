@@ -14,7 +14,6 @@ import type {
 
 const STATE_STYLE: Record<AbilityState, string> = {
   ready: "bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40",
-  stub: "bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40",
   missing_key: "bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/40",
 };
 
@@ -53,13 +52,21 @@ export default function SettingsPage() {
     return map;
   }, [view]);
 
-  /** 能力自身的 provider 选择框画在能力卡片里，不在通用表单里重复出现 */
-  const providerFieldNames = useMemo(
-    () => new Set((view?.ability_status ?? []).map((item) => `${item.ability}_provider`)),
+  /** 能力配置组的字段画在能力卡片内，不在通用表单里重复出现 */
+  const abilityFields = useMemo(
+    () => view?.groups.find((group) => group.name === "能力配置")?.fields ?? [],
     [view],
   );
 
   const overridden = useMemo(() => new Set(view?.overridden ?? []), [view]);
+
+  /** 条件字段：仅当依赖项取值命中时显示（如选中真实 provider 才显示端点/Key/模型） */
+  function visible(spec: FieldSpec): boolean {
+    if (!spec.show_when) return true;
+    return Object.entries(spec.show_when).every(([dep, allowed]) =>
+      allowed.map(String).includes(String(draft[dep] ?? "")),
+    );
+  }
 
   function setValue(name: string, value: unknown) {
     setDraft((prev) => ({ ...prev, [name]: value }));
@@ -172,9 +179,6 @@ export default function SettingsPage() {
       <Card>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-sm font-semibold text-slate-200">能力配置</h1>
-          <span className="rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-slate-400">
-            模式 {view.mode}
-          </span>
           <span className="text-xs text-slate-500">
             修改立即生效并持久化；未改动的项继续跟随环境变量
           </span>
@@ -221,12 +225,17 @@ export default function SettingsPage() {
       </Card>
 
       <Card>
-        <SectionTitle hint="每项能力可单独选择实现，留空则跟随全局模式">
+        <SectionTitle hint="每项能力显式选择实现并填写端点；搜索类能力暂无真实实现">
           四个能力
         </SectionTitle>
         <div className="grid gap-4 lg:grid-cols-2">
           {view.ability_status.map((item) => {
-            const spec = fieldSpecs[`${item.ability}_provider`];
+            const providerSpec = fieldSpecs[`${item.ability}_provider`];
+            const extraFields = abilityFields.filter(
+              (field) =>
+                field.name.startsWith(`${item.ability}_`) &&
+                field.name !== `${item.ability}_provider`,
+            );
             return (
               <div
                 key={item.ability}
@@ -244,16 +253,33 @@ export default function SettingsPage() {
                   </span>
                 </div>
                 <p className="font-mono text-[11px] text-slate-500">{item.signature}</p>
-                {spec ? (
+                {providerSpec ? (
                   <FieldEditor
+                    spec={providerSpec}
+                    value={draft[providerSpec.name]}
+                    overridden={overridden.has(providerSpec.name)}
+                    onChange={setValue}
+                    onSecretChange={setSecret}
+                    onSecretClear={clearSecret}
+                  />
+                ) : (
+                  <p className="rounded-lg border border-white/10 bg-white/[0.02] px-2.5 py-1.5 text-[11px] text-slate-500">
+                    仅 Mock（暂无真实实现）
+                  </p>
+                )}
+                {extraFields.filter(visible).map((spec) => (
+                  <FieldEditor
+                    key={spec.name}
                     spec={spec}
                     value={draft[spec.name]}
+                    secret={view.secrets[spec.name]}
+                    secretInput={secretInputs[spec.name]}
                     overridden={overridden.has(spec.name)}
                     onChange={setValue}
                     onSecretChange={setSecret}
                     onSecretClear={clearSecret}
                   />
-                ) : null}
+                ))}
                 {item.hint ? (
                   <p className="text-[11px] text-slate-500">{item.hint}</p>
                 ) : null}
@@ -264,7 +290,7 @@ export default function SettingsPage() {
       </Card>
 
       {view.groups
-        .filter((group) => group.name !== "能力提供方")
+        .filter((group) => group.name !== "能力配置")
         .map((group) => (
           <Card key={group.name}>
             <SectionTitle>{group.name}</SectionTitle>

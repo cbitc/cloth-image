@@ -1,4 +1,4 @@
-"""阿里云 MaaS 生图适配器测试（离线）。
+"""OpenAI 兼容生图适配器测试（离线）。
 
 重点覆盖实测踩到的坑：
   - 响应 `data` 是「被转义的 JSON 字符串」数组
@@ -18,7 +18,7 @@ import pytest
 from PIL import Image
 
 from app.abilities.base import MaterialImageResult, ReferenceImage
-from app.abilities.design_generate import QwenImageGenerator
+from app.abilities.design_generate import OpenAICompatibleImageGenerator
 from app.abilities.http import ProviderError, RetryingHttpClient
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -32,8 +32,8 @@ def _png(color: tuple[int, int, int] = (200, 60, 60)) -> bytes:
     return buffer.getvalue()
 
 
-def _generator(handler: Handler, **kwargs) -> QwenImageGenerator:
-    return QwenImageGenerator(
+def _generator(handler: Handler, **kwargs) -> OpenAICompatibleImageGenerator:
+    return OpenAICompatibleImageGenerator(
         api_key="test-key",
         base_url="https://img.test/compatible-mode/v1",
         model="qwen-image-3.0",

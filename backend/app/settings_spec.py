@@ -2,9 +2,13 @@
 
 前端设置页根据这里的 spec 动态渲染表单，因此**增删配置项只需改这一处**。
 
+两类字段（重构后职责分离）：
+- **能力配置**（由 `ABILITY_SPECS` 生成）：设置页写入数据库，是**唯一来源**，不读环境变量。
+- **环境变量字段**：环境变量 / .env 提供默认值，设置页可覆盖。
+
 安全约定：
 - `secret=True` 的字段永远不会把值返回给前端，只返回 `configured: bool`
-- 写入时：值为 `None` → 删除覆盖（回退到环境变量）；`""` → 显式置空；其它 → 覆盖
+- 写入时：值为 `None` → 删除覆盖（回退到默认值 / 环境变量）；`""` → 显式置空；其它 → 覆盖
 """
 
 from __future__ import annotations
@@ -12,108 +16,161 @@ from __future__ import annotations
 from typing import Any
 
 # --------------------------------------------------------------------------- #
-# 四个能力的元信息（用于展示状态、校验 provider 名）
+# 四个能力的元信息
 # --------------------------------------------------------------------------- #
+# `real_implemented=False` 的能力只有 mock 实现：UI 只展示状态，不提供 provider 选择。
+# provider 按协议命名（不绑定厂商）：
+#   material_identifier : openai_compatible        （OpenAI 兼容 /chat/completions）
+#   design_generator    : openai_compatible_image  （OpenAI 兼容 /images/generations）
 ABILITY_SPECS: list[dict[str, Any]] = [
     {
         "ability": "clothing_search",
         "label": "搜索服装图",
         "signature": "[网站列表] → [服装图片列表]",
-        "options": ["mock", "serpapi"],
-        "stub_options": ["serpapi"],
-        "key_field": {"serpapi": "serpapi_api_key"},
-        "option_hint": {"serpapi": "需要 SERPAPI_API_KEY，实现仍是占位"},
+        "real_implemented": False,
+        "options": ["mock"],
+        "hint": "暂无真实实现，仅供演示",
+        "fields": [],
     },
     {
         "ability": "material_identifier",
         "label": "识别服装材质",
         "signature": "服装图片 → [材质 tag 列表]",
-        "options": ["mock", "maas"],
-        "stub_options": [],
-        "key_field": {"maas": "resolved_vlm_api_key"},
-        "option_hint": {"maas": "调用阿里云 MaaS 的视觉语言模型"},
+        "real_implemented": True,
+        "options": ["mock", "openai_compatible"],
+        "hint": "底层走 OpenAI 兼容协议（/chat/completions），可指向任意兼容端点",
+        "fields": [
+            {
+                "name": "material_identifier_base_url",
+                "label": "端点 Base URL",
+                "type": "text",
+                "placeholder": "https://<your-endpoint>/v1",
+                "help": "只写到此为止，不含 /chat/completions。",
+            },
+            {
+                "name": "material_identifier_api_key",
+                "label": "API Key",
+                "type": "secret",
+            },
+            {
+                "name": "material_identifier_model",
+                "label": "视觉语言模型",
+                "type": "text",
+                "placeholder": "例如 qwen3-vl-plus / gpt-4o",
+            },
+        ],
     },
     {
         "ability": "material_search",
         "label": "查找材质图",
         "signature": "[材质 tag 列表] → [材质图片列表]",
-        "options": ["mock", "serpapi"],
-        "stub_options": ["serpapi"],
-        "key_field": {"serpapi": "serpapi_api_key"},
-        "option_hint": {"serpapi": "需要 SERPAPI_API_KEY，实现仍是占位"},
+        "real_implemented": False,
+        "options": ["mock"],
+        "hint": "暂无真实实现，仅供演示",
+        "fields": [],
     },
     {
         "ability": "design_generator",
         "label": "图生图生成设计图",
         "signature": "([材质图片], 设计想法) → [设计图]",
-        "options": ["mock", "dashscope", "fal"],
-        "stub_options": ["fal"],
-        "key_field": {"dashscope": "resolved_image_api_key", "fal": "fal_key"},
-        "option_hint": {"dashscope": "调用阿里云 MaaS 的 qwen-image 系列"},
+        "real_implemented": True,
+        "options": ["mock", "openai_compatible_image"],
+        "hint": "底层走 OpenAI 兼容协议（/images/generations），可指向任意兼容端点",
+        "fields": [
+            {
+                "name": "design_generator_base_url",
+                "label": "端点 Base URL",
+                "type": "text",
+                "placeholder": "https://<your-endpoint>/v1",
+                "help": "只写到此为止，不含 /images/generations。",
+            },
+            {
+                "name": "design_generator_api_key",
+                "label": "API Key",
+                "type": "secret",
+            },
+            {
+                "name": "design_generator_model",
+                "label": "生图模型",
+                "type": "text",
+                "placeholder": "例如 qwen-image-3.0",
+            },
+        ],
     },
 ]
 
 # --------------------------------------------------------------------------- #
 # 可编辑字段
 # --------------------------------------------------------------------------- #
-# 四个能力的 provider 选择项由 ABILITY_SPECS 自动生成，避免两处维护。
-# choices 里的空串表示「跟随全局兜底模式」。
-_PROVIDER_FIELDS: list[dict[str, Any]] = [
-    {
-        "name": f"{spec['ability']}_provider",
-        "label": spec["label"],
-        "group": "能力提供方",
-        "type": "select",
-        "choices": ["", *spec["options"]],
-        "option_labels": {"": "跟随全局模式", **spec.get("option_labels", {})},
-        "help": spec["signature"],
-    }
+# 能力配置字段由 ABILITY_SPECS 自动生成，避免两处维护。
+_REAL_OPTIONS: dict[str, list[str]] = {
+    spec["ability"]: [opt for opt in spec["options"] if opt != "mock"]
     for spec in ABILITY_SPECS
-]
+}
+
+
+def _provider_fields() -> list[dict[str, Any]]:
+    """每个「有真实实现」的能力一个 provider 选择框（无空值、无全局回退）。"""
+    return [
+        {
+            "name": f"{spec['ability']}_provider",
+            "label": "实现",
+            "group": "能力配置",
+            "type": "select",
+            "choices": spec["options"],
+            "help": spec["signature"],
+        }
+        for spec in ABILITY_SPECS
+        if spec["real_implemented"]
+    ]
+
+
+def _provider_specific_fields() -> list[dict[str, Any]]:
+    """provider 专属字段：仅当该能力选中真实实现时显示（`show_when`）。"""
+    out: list[dict[str, Any]] = []
+    for spec in ABILITY_SPECS:
+        real = _REAL_OPTIONS[spec["ability"]]
+        for field in spec["fields"]:
+            merged = {"group": "能力配置", **field}
+            if real:
+                merged["show_when"] = {f"{spec['ability']}_provider": real}
+            out.append(merged)
+    return out
+
+
+_PROVIDER_FIELDS = _provider_fields()
+_PROVIDER_SPECIFIC_FIELDS = _provider_specific_fields()
+
+#: 能力配置字段名（DB 为唯一来源，不读环境变量）
+ABILITY_FIELD_NAMES: tuple[str, ...] = tuple(
+    spec["name"] for spec in [*_PROVIDER_FIELDS, *_PROVIDER_SPECIFIC_FIELDS]
+)
 
 # type: select | text | secret | int | float | bool
 FIELD_SPECS: list[dict[str, Any]] = [
-    {
-        "name": "provider_mode",
-        "label": "全局兜底模式",
-        "group": "能力提供方",
-        "type": "select",
-        "choices": ["mock", "real"],
-        "help": "单项能力留空时回退到这里。mock = 假数据，零外部依赖。",
-    },
     *_PROVIDER_FIELDS,
+    *_PROVIDER_SPECIFIC_FIELDS,
     {
-        "name": "maas_base_url",
-        "label": "MaaS 端点 Base URL",
-        "group": "阿里云 MaaS",
-        "type": "text",
-        "help": "OpenAI 兼容地址，识别与生图共用。",
+        "name": "identify_top_k",
+        "label": "最多输出几个材质候选",
+        "group": "识别参数",
+        "type": "int",
+        "min": 1,
+        "max": 8,
     },
     {
-        "name": "maas_api_key",
-        "label": "MaaS API Key",
-        "group": "阿里云 MaaS",
-        "type": "secret",
-        "help": "留空表示不修改；点「清除」则回退到环境变量。",
-    },
-    {
-        "name": "vlm_model",
-        "label": "视觉识别模型",
-        "group": "阿里云 MaaS",
-        "type": "text",
-        "help": "需为视觉语言模型，例如 qwen3-vl-plus。",
-    },
-    {
-        "name": "image_model",
-        "label": "生图模型",
-        "group": "阿里云 MaaS",
-        "type": "text",
-        "help": "例如 qwen-image-3.0。",
+        "name": "vision_max_image_side",
+        "label": "送模型前图片最长边",
+        "group": "识别参数",
+        "type": "int",
+        "min": 256,
+        "max": 4096,
+        "help": "等比缩放上限，越大越清晰但 token 成本越高。",
     },
     {
         "name": "image_size",
         "label": "生图尺寸",
-        "group": "阿里云 MaaS",
+        "group": "生图参数",
         "type": "text",
         "pattern": r"^\d+x\d+$",
         "help": "必须用 x 分隔，形如 1024x1024；写成 1024*1024 会被接口拒绝。",
@@ -121,7 +178,7 @@ FIELD_SPECS: list[dict[str, Any]] = [
     {
         "name": "image_max_refs",
         "label": "参考图上限",
-        "group": "阿里云 MaaS",
+        "group": "生图参数",
         "type": "int",
         "min": 0,
         "max": 3,
@@ -130,59 +187,9 @@ FIELD_SPECS: list[dict[str, Any]] = [
     {
         "name": "prompt_extend",
         "label": "允许模型改写提示词",
-        "group": "阿里云 MaaS",
+        "group": "生图参数",
         "type": "bool",
         "help": "提示词已结构化组装，一般建议关闭。",
-    },
-    {
-        "name": "vlm_api_key",
-        "label": "识别专用 Key",
-        "group": "MaaS 细分覆盖",
-        "type": "secret",
-        "help": "留空则复用 MaaS API Key。",
-    },
-    {
-        "name": "image_api_key",
-        "label": "生图专用 Key",
-        "group": "MaaS 细分覆盖",
-        "type": "secret",
-        "help": "留空则复用 MaaS API Key。",
-    },
-    {
-        "name": "vlm_base_url",
-        "label": "识别专用 Base URL",
-        "group": "MaaS 细分覆盖",
-        "type": "text",
-        "help": "留空则复用 MaaS 端点。",
-    },
-    {
-        "name": "image_base_url",
-        "label": "生图专用 Base URL",
-        "group": "MaaS 细分覆盖",
-        "type": "text",
-        "help": "留空则复用 MaaS 端点。",
-    },
-    {
-        "name": "serpapi_api_key",
-        "label": "SerpAPI Key",
-        "group": "其他提供方",
-        "type": "secret",
-        "help": "搜图 / 材质图检索用（对应实现仍是占位）。",
-    },
-    {
-        "name": "fal_key",
-        "label": "fal.ai Key",
-        "group": "其他提供方",
-        "type": "secret",
-        "help": "备选生图提供方（实现仍是占位）。",
-    },
-    {
-        "name": "identify_top_k",
-        "label": "最多输出几个材质候选",
-        "group": "流水线参数",
-        "type": "int",
-        "min": 1,
-        "max": 8,
     },
     {
         "name": "material_images_per_tag",
@@ -210,7 +217,7 @@ FIELD_SPECS: list[dict[str, Any]] = [
     {
         "name": "provider_timeout_s",
         "label": "外部调用超时（秒）",
-        "group": "HTTP 与图片",
+        "group": "HTTP 与重试",
         "type": "float",
         "min": 5,
         "max": 600,
@@ -218,19 +225,10 @@ FIELD_SPECS: list[dict[str, Any]] = [
     {
         "name": "provider_max_retries",
         "label": "失败重试次数",
-        "group": "HTTP 与图片",
+        "group": "HTTP 与重试",
         "type": "int",
         "min": 0,
         "max": 8,
-    },
-    {
-        "name": "vision_max_image_side",
-        "label": "送模型前图片最长边",
-        "group": "HTTP 与图片",
-        "type": "int",
-        "min": 256,
-        "max": 4096,
-        "help": "等比缩放上限，越大越清晰但 token 成本越高。",
     },
 ]
 

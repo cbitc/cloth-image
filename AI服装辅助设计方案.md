@@ -145,6 +145,10 @@ generateDesignImage → 2-4 张候选设计图 → 用户挑选/继续迭代
 | AI - 图生图 | Nano Banana 2 或 FLUX.2 API（经 fal.ai / Replicate 聚合接入） |
 | 检索 | MVP 用 SerpApi；二期自建材质库 + pgvector |
 
+> 实现现状（能力配置重构后）：**能力配置以设置页为唯一来源**。识别 / 生图视为通用能力，
+> provider 按协议命名为 `openai_compatible` / `openai_compatible_image`（不绑定具体厂商）；
+> 搜索类能力当前仅 mock，尚未接入 SerpApi。
+
 ---
 
 ## 5. 风险与注意事项

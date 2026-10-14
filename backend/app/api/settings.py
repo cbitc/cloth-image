@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import settings_store
+from app.ability_config import get_ability_settings
 from app.abilities.registry import get_abilities, reset_abilities_cache
 from app.config import apply_overrides, get_settings
 from app.db.session import get_db
@@ -32,7 +33,9 @@ class SettingsPatch(BaseModel):
 
 def _snapshot(db: Session) -> dict:
     overrides = settings_store.load_overrides(db)
-    return build_settings_payload(get_settings(), get_abilities(), overrides)
+    return build_settings_payload(
+        get_settings(), get_ability_settings(), get_abilities(), overrides
+    )
 
 
 def _guard_writable() -> None:

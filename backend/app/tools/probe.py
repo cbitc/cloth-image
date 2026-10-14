@@ -18,6 +18,7 @@ import json
 import sys
 from typing import Any
 
+from app.ability_config import get_ability_settings
 from app.abilities.base import ReferenceImage
 from app.abilities.mock_images import KIND_CLOTHING, make_image
 from app.abilities.registry import config_warnings, get_abilities
@@ -37,15 +38,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-image", action="store_true", help="跳过生图")
     args = parser.parse_args(argv)
 
+    ability = get_ability_settings()
     settings = get_settings()
     abilities = get_abilities()
 
     print("=" * 68)
-    print(f"provider_mode : {settings.provider_mode}")
     print(f"能力提供方     : {abilities.summary()}")
-    print(f"识别模型       : {settings.vlm_model}")
-    print(f"生图模型       : {settings.image_model} ({settings.image_size})")
-    for warning in config_warnings(settings, abilities):
+    print(f"识别模型       : {ability.material_identifier_model or '<未配置>'}")
+    print(
+        f"生图模型       : {ability.design_generator_model or '<未配置>'}"
+        f"（{settings.image_size}）"
+    )
+    for warning in config_warnings(abilities, ability):
         print(f"[配置提醒] {warning}")
     print("=" * 68)
 

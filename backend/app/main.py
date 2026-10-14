@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__, settings_store
+from app.ability_config import get_ability_settings
 from app.abilities.registry import config_warnings, get_abilities, reset_abilities_cache
 from app.api import (
     cache,
@@ -48,11 +49,10 @@ async def lifespan(_: FastAPI):
         )
 
     abilities = get_abilities()
-    effective = get_settings()
     logger.info("能力提供方：%s（mode=%s）", abilities.summary(), abilities.mode)
     if abilities.real_providers:
         logger.info("已启用真实能力：%s", "、".join(abilities.real_providers))
-    for warning in config_warnings(effective, abilities):
+    for warning in config_warnings(abilities, get_ability_settings()):
         logger.warning("配置提醒：%s", warning)
     yield
 
@@ -89,7 +89,6 @@ def health() -> dict:
     return {
         "status": "ok",
         "version": __version__,
-        "provider_mode": effective.provider_mode,
         "abilities": abilities.providers,
         "abilities_mode": abilities.mode,
         "storage_backend": effective.storage_backend,

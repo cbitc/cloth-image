@@ -96,6 +96,7 @@ export function FieldEditor({
       ) : (
         <input
           value={value === null || value === undefined ? "" : String(value)}
+          placeholder={spec.placeholder ?? ""}
           onChange={(event) => onChange(spec.name, event.target.value)}
           className={inputClass}
         />

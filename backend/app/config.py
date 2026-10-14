@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.settings_spec import ABILITY_FIELD_NAMES
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -40,42 +42,16 @@ class Settings(BaseSettings):
     s3_region: str = "us-east-1"
 
     # ------------------------------------------------------------------ #
-    # 能力提供方
+    # 能力配置（provider / base_url / api_key / model）
     # ------------------------------------------------------------------ #
-    # 兑底开关：mock（默认，零外部依赖）| real
-    provider_mode: str = "mock"
-
-    # 每个能力可单独覆盖，留空则回退到 provider_mode。
-    #   clothing_search     : mock | serpapi
-    #   material_identifier : mock | maas
-    #   material_search     : mock | serpapi
-    #   design_generator    : mock | dashscope | fal
-    clothing_search_provider: str = ""
-    material_identifier_provider: str = ""
-    material_search_provider: str = ""
-    design_generator_provider: str = ""
-
-    # 阿里云 MaaS（OpenAI 兼容）—— 视觉理解与生图共用同一端点
-    maas_base_url: str = (
-        "https://ws-yilqbuvsxvumn3ms.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
-    )
-    maas_api_key: str = ""
-    vlm_model: str = "qwen3-vl-plus"
-    image_model: str = "qwen-image-3.0"
+    # 这四项是「能力直接相关配置」，**唯一来源是设置页（数据库）**，见 app/ability_config.py。
+    # 此处不声明字段，也不读环境变量；由 apply_overrides 按字段归属分流。
+    #
+    # 生图参数（env 打底，设置页可覆盖）
     image_size: str = "1024x1024"
     # 实测 qwen-image-3.0 限制：0 张 = 文生图，1~3 张 = 图生图（超限会直接 400）
     image_max_refs: int = 3
     prompt_extend: bool = False
-
-    # 可分别覆盖上面两项（留空则回退到 MaaS 配置），便于将来换厂商
-    vlm_base_url: str = ""
-    vlm_api_key: str = ""
-    image_base_url: str = ""
-    image_api_key: str = ""
-
-    # 其他真实 provider 的 key
-    serpapi_api_key: str = ""
-    fal_key: str = ""
 
     # HTTP / 图片
     provider_timeout_s: float = 90.0
@@ -97,39 +73,6 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     # 派生配置
     # ------------------------------------------------------------------ #
-    ABILITY_NAMES: ClassVar[tuple[str, ...]] = (
-        "clothing_search",
-        "material_identifier",
-        "material_search",
-        "design_generator",
-    )
-
-    def provider_for(self, ability: str) -> str:
-        """解析某个能力实际使用的 provider（显式配置优先，否则回退 provider_mode）。"""
-        explicit = str(getattr(self, f"{ability}_provider", "") or "").strip()
-        fallback = (self.provider_mode or "mock").strip() or "mock"
-        return (explicit or fallback).lower()
-
-    @property
-    def providers(self) -> dict[str, str]:
-        return {name: self.provider_for(name) for name in self.ABILITY_NAMES}
-
-    @property
-    def resolved_vlm_base_url(self) -> str:
-        return (self.vlm_base_url or self.maas_base_url).rstrip("/")
-
-    @property
-    def resolved_vlm_api_key(self) -> str:
-        return self.vlm_api_key or self.maas_api_key
-
-    @property
-    def resolved_image_base_url(self) -> str:
-        return (self.image_base_url or self.maas_base_url).rstrip("/")
-
-    @property
-    def resolved_image_api_key(self) -> str:
-        return self.image_api_key or self.maas_api_key
-
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
@@ -150,19 +93,33 @@ def get_settings() -> Settings:
 
 
 def current_overrides() -> dict[str, Any]:
-    """当前生效的覆盖项快照。"""
+    """当前生效的（环境变量类）覆盖项快照。"""
     return dict(_OVERRIDES)
 
 
 def apply_overrides(values: Mapping[str, Any] | None) -> None:
     """替换覆盖集合并清缓存。
 
+    按字段归属分流：
+    - `ABILITY_FIELD_NAMES` → `app.ability_config`（能力的唯一来源）
+    - 其余 → 本模块 `_OVERRIDES`（环境变量打底、设置页可覆盖）
+
     调用方若需要让能力实现重新构建，还应调用
     `app.abilities.registry.reset_abilities_cache()`。
     """
+    ability_values: dict[str, Any] = {}
+    env_values: dict[str, Any] = {}
+    for key, value in (values or {}).items():
+        (ability_values if key in ABILITY_FIELD_NAMES else env_values)[key] = value
+
     _OVERRIDES.clear()
-    _OVERRIDES.update(values or {})
+    _OVERRIDES.update(env_values)
     get_settings.cache_clear()
+
+    # 延迟导入：避开 config <-> ability_config 的导入环
+    from app.ability_config import apply_ability_overrides
+
+    apply_ability_overrides(ability_values)
 
 
 def reset_settings_cache() -> None:

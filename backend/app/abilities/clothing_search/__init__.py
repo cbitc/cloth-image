@@ -1,6 +1,5 @@
-"""服装图搜索能力。"""
+"""服装图搜索能力（当前仅 mock 实现）。"""
 
 from app.abilities.clothing_search.mock import MockClothingSearchProvider
-from app.abilities.clothing_search.serpapi import SerpApiClothingSearchProvider
 
-__all__ = ["MockClothingSearchProvider", "SerpApiClothingSearchProvider"]
+__all__ = ["MockClothingSearchProvider"]

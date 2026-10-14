@@ -38,14 +38,17 @@ def test_get_returns_structured_config(client) -> None:
     assert resp.status_code == 200
     body = resp.json()
 
-    assert [group["name"] for group in body["groups"]][0] == "能力提供方"
+    assert [group["name"] for group in body["groups"]][0] == "能力配置"
     assert all("fields" in group and group["fields"] for group in body["groups"])
 
     # 非密钥字段给真值，密钥字段只给状态
-    assert body["values"]["vlm_model"] == "qwen3-vl-plus"
     assert body["values"]["image_size"] == "1024x1024"
-    assert body["secrets"]["maas_api_key"] == {"configured": False, "overridden": False}
-    assert "value" not in body["secrets"]["maas_api_key"]
+    assert body["values"]["material_identifier_provider"] == "mock"
+    assert body["secrets"]["material_identifier_api_key"] == {
+        "configured": False,
+        "overridden": False,
+    }
+    assert "value" not in body["secrets"]["material_identifier_api_key"]
 
     assert len(body["ability_status"]) == 4
     assert body["abilities"] == {
@@ -56,61 +59,74 @@ def test_get_returns_structured_config(client) -> None:
     }
 
 
-def test_ability_status_flags_placeholder_implementations(client) -> None:
+def test_search_abilities_are_mock_only(client) -> None:
+    """搜索类能力没有真实实现：只暴露 mock，且不提供 provider 选择字段。"""
     body = client.get("/api/settings").json()
 
-    # serpapi / fal 仍是占位实现，应明确标出来
     web = _ability(body, "clothing_search")
-    assert set(web["options"]) == {"mock", "serpapi"}
+    assert web["real_implemented"] is False
+    assert web["options"] == ["mock"]
+    assert web["state"] == "ready"
+    assert web["state_label"] == "Mock"
 
-    client.put(
-        "/api/settings", json={"values": {"clothing_search_provider": "serpapi"}}
-    )
-    body = client.get("/api/settings").json()
-    web = _ability(body, "clothing_search")
-    assert web["provider"] == "serpapi"
-    assert web["state"] == "stub"
-    assert web["state_label"] == "占位实现"
+    # 没有 provider 选择字段，也没有 provider 专属字段
+    names = {field["name"] for group in body["groups"] for field in group["fields"]}
+    assert not any(name.startswith("clothing_search_") for name in names)
 
 
 def test_ability_status_flags_missing_key(client) -> None:
     client.put(
-        "/api/settings", json={"values": {"material_identifier_provider": "maas"}}
+        "/api/settings",
+        json={"values": {"material_identifier_provider": "openai_compatible"}},
     )
     body = client.get("/api/settings").json()
 
     identifier = _ability(body, "material_identifier")
-    assert identifier["provider"] == "maas"
+    assert identifier["provider"] == "openai_compatible"
     assert identifier["state"] == "missing_key"
-    assert any("MAAS_API_KEY" in warning for warning in body["warnings"])
+    assert any("API Key" in warning for warning in body["warnings"])
+
+    # 补齐 Key 后恢复可用
+    client.put(
+        "/api/settings", json={"values": {"material_identifier_api_key": "sk-x"}}
+    )
+    body = client.get("/api/settings").json()
+    assert _ability(body, "material_identifier")["state"] == "ready"
 
 
 # --------------------------------------------------------------------------- #
 # 写入
 # --------------------------------------------------------------------------- #
-def test_override_beats_environment_variable(client) -> None:
-    """conftest 里环境变量把 provider 固定为 mock；覆盖项应能压过它。"""
-    before = client.get("/api/settings").json()
-    assert before["abilities"]["material_identifier"] == "mock"
+def test_environment_variable_does_not_affect_ability_config(
+    client, monkeypatch
+) -> None:
+    """能力配置的唯一来源是设置页；环境变量不再参与（消除旧兼容层）。"""
+    monkeypatch.setenv("MATERIAL_IDENTIFIER_PROVIDER", "openai_compatible")
 
+    body = client.get("/api/settings").json()
+    assert body["abilities"]["material_identifier"] == "mock"
+
+
+def test_override_applies_immediately(client) -> None:
     resp = client.put(
-        "/api/settings", json={"values": {"material_identifier_provider": "maas"}}
+        "/api/settings",
+        json={"values": {"material_identifier_provider": "openai_compatible"}},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
 
-    assert body["abilities"]["material_identifier"] == "maas"
-    assert body["mode"] == "mixed"
+    assert body["abilities"]["material_identifier"] == "openai_compatible"
     assert body["overridden"] == ["material_identifier_provider"]
 
 
 def test_updating_secret_reports_configured_without_echoing_value(client) -> None:
     resp = client.put(
-        "/api/settings", json={"values": {"maas_api_key": "sk-secret-value"}}
+        "/api/settings",
+        json={"values": {"material_identifier_api_key": "sk-secret-value"}},
     )
     assert resp.status_code == 200, resp.text
 
-    secret = resp.json()["secrets"]["maas_api_key"]
+    secret = resp.json()["secrets"]["material_identifier_api_key"]
     assert secret["configured"] is True
     assert secret["overridden"] is True
     assert "sk-secret-value" not in resp.text  # 绝不回传密钥
@@ -120,17 +136,23 @@ def test_updating_secret_reports_configured_without_echoing_value(client) -> Non
 
 
 def test_null_value_removes_override_and_falls_back(client) -> None:
-    client.put("/api/settings", json={"values": {"vlm_model": "my-custom-model"}})
+    client.put(
+        "/api/settings",
+        json={"values": {"design_generator_model": "my-custom-model"}},
+    )
     assert (
-        client.get("/api/settings").json()["values"]["vlm_model"] == "my-custom-model"
+        client.get("/api/settings").json()["values"]["design_generator_model"]
+        == "my-custom-model"
     )
 
-    resp = client.put("/api/settings", json={"values": {"vlm_model": None}})
+    resp = client.put(
+        "/api/settings", json={"values": {"design_generator_model": None}}
+    )
     assert resp.status_code == 200
 
     body = resp.json()
-    assert body["values"]["vlm_model"] == "qwen3-vl-plus"  # 回退到代码默认值
-    assert "vlm_model" not in body["overridden"]
+    assert body["values"]["design_generator_model"] == ""  # 回退到代码默认值
+    assert "design_generator_model" not in body["overridden"]
 
 
 def test_delete_resets_everything(client) -> None:
@@ -138,8 +160,8 @@ def test_delete_resets_everything(client) -> None:
         "/api/settings",
         json={
             "values": {
-                "material_identifier_provider": "maas",
-                "design_generator_provider": "dashscope",
+                "material_identifier_provider": "openai_compatible",
+                "design_generator_provider": "openai_compatible_image",
             }
         },
     )
@@ -212,7 +234,7 @@ def test_write_can_be_disabled_by_env(client, monkeypatch) -> None:
     disabled = config.Settings(settings_write_enabled=False)
     monkeypatch.setattr("app.api.settings.get_settings", lambda: disabled)
 
-    resp = client.put("/api/settings", json={"values": {"vlm_model": "x"}})
+    resp = client.put("/api/settings", json={"values": {"design_generator_model": "x"}})
     assert resp.status_code == 403
     assert "禁用" in resp.json()["detail"]
 
@@ -228,7 +250,7 @@ def test_coerce_handles_types() -> None:
     assert coerce("provider_timeout_s", "12.5") == 12.5
     assert coerce("prompt_extend", "true") is True
     assert coerce("prompt_extend", 0) is False
-    assert coerce("provider_mode", " mock ") == "mock"
+    assert coerce("material_identifier_provider", " mock ") == "mock"
 
     with pytest.raises(SettingsValidationError):
         coerce("image_max_refs", "abc")
@@ -239,5 +261,15 @@ def test_coerce_handles_types() -> None:
 
 
 def test_validate_patch_keeps_none_and_cleans_values() -> None:
-    cleaned = validate_patch({"vlm_model": " m ", "image_max_refs": 2, "fal_key": None})
-    assert cleaned == {"vlm_model": "m", "image_max_refs": 2, "fal_key": None}
+    cleaned = validate_patch(
+        {
+            "design_generator_model": " m ",
+            "image_max_refs": 2,
+            "material_identifier_api_key": None,
+        }
+    )
+    assert cleaned == {
+        "design_generator_model": "m",
+        "image_max_refs": 2,
+        "material_identifier_api_key": None,
+    }

@@ -1,11 +1,14 @@
-"""阿里云 MaaS 生图（OpenAI 兼容 `/images/generations`）—— qwen-image 系列。
+"""OpenAI 兼容的生图适配器（`/images/generations`）。
 
-实测要点（qwen-image-3.0）：
+不绑定具体厂商：任何实现该协议的端点（如阿里云 MaaS 的 qwen-image 系列、自建中转等）
+都可直接使用，只需在设置页填 base_url / api_key / model。
+
+实测要点（以 qwen-image-3.0 为例）：
   - `size` 必须形如 `"1024x1024"`；写成 `"1024*1024"` 会直接 400
   - `image` 支持字符串或数组，**数组即多参考图**；
-    但模型限 **0~3 张**（0=文生图，1~3=图生图），超过会直接 400
+    部分模型限 **0~3 张**（0=文生图，1~3=图生图），超过会直接 400
   - 响应 `data` 是**被转义的 JSON 字符串数组**，必须逐个 `json.loads`
-  - 返回的是 OSS 临时地址 → 编排器必须镜像落盘，否则会静默失效
+  - 返回的常是临时地址（如 OSS）→ 编排器必须镜像落盘，否则会静默失效
 """
 
 from __future__ import annotations
@@ -76,8 +79,8 @@ def _extract_urls(response: dict[str, Any]) -> list[str]:
     return urls
 
 
-class QwenImageGenerator:
-    name = "dashscope"
+class OpenAICompatibleImageGenerator:
+    name = "openai_compatible_image"
 
     def __init__(
         self,

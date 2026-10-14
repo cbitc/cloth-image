@@ -1,13 +1,15 @@
 """把配置组装成给前端设置页的响应。
 
 - 密钥永不回传真值，只回传 `configured` 布尔
-- 每个能力附上「是否占位实现 / 是否缺 Key」的状态，用户一眼能看出为什么跑不通
+- 每个能力附上可用状态，用户一眼能看出为什么跑不通
+- 取值来自两处：能力配置（DB，`AbilitySettings`）+ 环境变量类配置（`Settings`）
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from app.ability_config import AbilitySettings
 from app.abilities.base import Abilities
 from app.abilities.registry import config_warnings
 from app.config import Settings
@@ -20,58 +22,64 @@ from app.settings_spec import (
 
 STATE_LABEL = {
     "ready": "可用",
-    "stub": "占位实现",
-    "missing_key": "缺少 Key",
+    "missing_key": "缺少配置",
 }
 
 
+def _read(name: str, settings: Settings, ability: AbilitySettings) -> Any:
+    """按字段归属取值（两处字段名不重叠）。"""
+    if hasattr(ability, name):
+        return getattr(ability, name)
+    return getattr(settings, name, None)
+
+
 def split_values(
-    settings: Settings, overrides: dict[str, Any]
+    settings: Settings, ability: AbilitySettings, overrides: dict[str, Any]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """拆成 (非密钥值, 密钥状态)。"""
     values: dict[str, Any] = {}
     secrets: dict[str, Any] = {}
 
     for name in EDITABLE_FIELD_NAMES:
+        raw = _read(name, settings, ability)
         if name in SECRET_FIELD_NAMES:
             secrets[name] = {
-                "configured": bool(getattr(settings, name, "")),
+                "configured": bool(raw),
                 "overridden": name in overrides,
             }
         else:
-            values[name] = getattr(settings, name, None)
+            values[name] = raw
 
     return values, secrets
 
 
-def ability_status(settings: Settings, abilities: Abilities) -> list[dict[str, Any]]:
+def ability_status(
+    ability: AbilitySettings, abilities: Abilities
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
 
     for spec in ABILITY_SPECS:
-        ability = spec["ability"]
-        provider = abilities.providers.get(ability, "mock")
-        is_stub = provider in spec["stub_options"]
+        name = spec["ability"]
+        provider = abilities.providers.get(name, "mock")
 
-        key_attr = spec["key_field"].get(provider)
-        has_key = bool(getattr(settings, key_attr, "")) if key_attr else True
-
-        if is_stub:
-            state = "stub"
-        elif provider != "mock" and not has_key:
-            state = "missing_key"
+        if provider == "mock":
+            state, state_label = "ready", "Mock"
         else:
-            state = "ready"
+            has_key = bool(getattr(ability, f"{name}_api_key", ""))
+            state = "ready" if has_key else "missing_key"
+            state_label = STATE_LABEL[state]
 
         out.append(
             {
-                "ability": ability,
+                "ability": name,
                 "label": spec["label"],
                 "signature": spec["signature"],
                 "provider": provider,
+                "real_implemented": spec["real_implemented"],
                 "options": spec["options"],
                 "state": state,
-                "state_label": STATE_LABEL[state],
-                "hint": spec.get("option_hint", {}).get(provider, ""),
+                "state_label": state_label,
+                "hint": spec.get("hint", ""),
             }
         )
 
@@ -79,19 +87,21 @@ def ability_status(settings: Settings, abilities: Abilities) -> list[dict[str, A
 
 
 def build_settings_payload(
-    settings: Settings, abilities: Abilities, overrides: dict[str, Any]
+    settings: Settings,
+    ability: AbilitySettings,
+    abilities: Abilities,
+    overrides: dict[str, Any],
 ) -> dict[str, Any]:
-    values, secrets = split_values(settings, overrides)
+    values, secrets = split_values(settings, ability, overrides)
 
     return {
-        "ability_status": ability_status(settings, abilities),
+        "ability_status": ability_status(ability, abilities),
         "groups": _groups(),
         "values": values,
         "secrets": secrets,
         "overridden": sorted(overrides),
-        "mode": abilities.mode,
         "abilities": abilities.providers,
-        "warnings": config_warnings(settings, abilities),
+        "warnings": config_warnings(abilities, ability),
         "storage_writable": True,
     }
 

@@ -74,7 +74,6 @@ services:
       S3_SECRET_KEY: minioadmin
       S3_BUCKET: cloth-images
       TASK_EXECUTION: celery
-      PROVIDER_MODE: mock
     ports:
       - "8000:8000"
     command: >
@@ -98,7 +97,6 @@ services:
       S3_SECRET_KEY: minioadmin
       S3_BUCKET: cloth-images
       TASK_EXECUTION: celery
-      PROVIDER_MODE: mock
     command: celery -A app.tasks.worker.celery_app worker --loglevel=info --pool=solo
 
   frontend:

@@ -108,6 +108,7 @@ cloth-image/
 │     ├─ schemas.py            # API 契约（与前端 types.ts 对应）
 │     ├─ storage.py            # 对象存储抽象：local | s3(MinIO)
 │     ├─ db/                   # SQLAlchemy 模型与会话
+│     ├─ ability_config.py     # ★ 能力配置（设置页写入，DB 为唯一来源，不读 env）
 │     ├─ abilities/            # ★ 能力适配器层
 │     │  ├─ base.py            #   4 个 Protocol + DTO
 │     │  ├─ http.py            #   共享 HTTP 客户端（超时 / 重试 / 具名异常）
@@ -115,10 +116,10 @@ cloth-image/
 │     │  ├─ mock_images.py     #   Pillow 确定性占位图
 │     │  ├─ prompting.py       #   图生图 prompt 组装
 │     │  ├─ registry.py        #   按能力注入实现（混合 mock / 真实）
-│     │  ├─ clothing_search/{mock.py, serpapi.py}
+│     │  ├─ clothing_search/{mock.py}
 │     │  ├─ material_identify/{mock.py, openai_compatible_vlm.py}
-│     │  ├─ material_search/{mock.py, serpapi.py}
-│     │  └─ design_generate/{mock.py, dashscope.py, fal.py}
+│     │  ├─ material_search/{mock.py}
+│     │  └─ design_generate/{mock.py, openai_compatible_image.py}
 │     ├─ taxonomy/materials.yaml  # 受控材质词表（60 条，中英双语）
 │     ├─ tasks/                # 状态机 / 编排器 / 分发器 / worker / 持久化 / 序列化 / fetch(下载+镜像)
 │     ├─ tools/probe.py        # 真实 provider 联调探针
@@ -177,37 +178,39 @@ npm run dev
 
 ## 6. 配置
 
-全部配置见 `.env.example`，关键项：
+**能力配置**（provider / 端点 / Key / 模型）只在**设置页**配置，写入数据库、立即生效，
+**不读环境变量**。其余配置见 `.env.example`：
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `PROVIDER_MODE` | `mock` | 全局兜底：`mock` / `real` |
-| `MATERIAL_IDENTIFIER_PROVIDER` | 空 | 空则回退 `PROVIDER_MODE`；可选 `mock` / `maas` |
-| `DESIGN_GENERATOR_PROVIDER` | 空 | 可选 `mock` / `dashscope` / `fal` |
-| `CLOTHING_SEARCH_PROVIDER` | 空 | 可选 `mock` / `serpapi`（serpapi 仍是空壳） |
-| `MATERIAL_SEARCH_PROVIDER` | 空 | 可选 `mock` / `serpapi`（serpapi 仍是空壳） |
-| `MAAS_API_KEY` | 空 | 阿里云 MaaS（OpenAI 兼容）Key，识别与生图共用 |
-| `VLM_MODEL` | `qwen3-vl-plus` | 材质识别用的视觉语言模型 |
-| `IMAGE_MODEL` | `qwen-image-3.0` | 生图模型 |
-| `IMAGE_SIZE` | `1024x1024` | **必须用 `x` 分隔**，写成 `1024*1024` 会被 API 拒绝 |
+| `IMAGE_SIZE` | `1024x1024` | 生图尺寸；**必须用 `x` 分隔**，写成 `1024*1024` 会被 API 拒绝 |
 | `IMAGE_MAX_REFS` | `3` | 参考图上限；实测 `qwen-image-3.0` 只支持 0~3 张 |
+| `PROMPT_EXTEND` | `false` | 是否允许模型改写提示词（已结构化组装，建议关闭） |
 | `IDENTIFY_CACHE_ENABLED` | `true` | 相同图片 + 相同模型时复用识别结果 |
+| `PROVIDER_TIMEOUT_S` | `90` | 外部调用超时（秒） |
+| `PROVIDER_MAX_RETRIES` | `3` | 外部调用失败重试次数 |
+| `VISION_MAX_IMAGE_SIDE` | `1568` | 送模型前图片等比缩放的最长边 |
 | `TASK_EXECUTION` | `inline` | `sync` 同步（测试）/ `inline` 线程池 / `celery` 队列 |
 | `STORAGE_BACKEND` | `local` | `local` 本地目录 + `/media` / `s3` MinIO |
 | `DATABASE_URL` | sqlite | 本机 SQLite；Compose 内为 Postgres |
 
-### 6.1 在界面上配置（无需改 .env）
+> 上表中的项可由环境变量提供默认值、也可在设置页覆盖；**能力配置项则完全来自设置页**。
 
-打开 `http://localhost:3000/settings`，可以完成全部能力相关配置：
+### 6.1 在界面上配置（推荐）
 
-- **四个能力逐个选 provider**（mock / 真实实现），并直接看到每个能力的**可用状态**：
-  `可用` / `占位实现`（serpapi / fal 仍是空壳，选中也没用）/ `缺少 Key`
-- 填入 MaaS 端点、API Key、识别模型、生图模型、生图尺寸、参考图上限等
-- 调整流水线参数（候选数、每个 tag 几张图、识别缓存开关）与 HTTP 超时/重试
+打开 `http://localhost:3000/settings`：
+
+- **两个有真实实现的能力**（识别 / 生图）各自显式选择实现，且仅当选中真实实现时才展开
+  端点 Base URL / API Key / 模型名：
+  - 识别：`mock` / `openai_compatible`（OpenAI 兼容 `/chat/completions`）
+  - 生图：`mock` / `openai_compatible_image`（OpenAI 兼容 `/images/generations`）
+- **搜索类能力**（搜索服装图 / 查找材质图）当前只有 mock，页面直接标注「仅 Mock（暂无真实实现）」
+- 调整生图参数、识别参数、流水线参数与 HTTP 超时/重试
 - 查看识别缓存的命中数与估算省下的 token，并可一键清空
 
-**配置优先级**：`设置页（数据库 app_setting）` > `环境变量 / .env` > `代码默认值`。
-设置页**只保存你改动过的项**，未改动的继续跟随环境变量；用「重置为环境变量」可一键清空全部覆盖。
+**配置优先级**：能力配置 = 设置页（数据库 `app_setting`）**唯一来源**；
+其余项 = 设置页 > 环境变量 / `.env` > 代码默认值。
+「重置为环境变量」会清空全部覆盖。
 
 > ⚠️ 密钥**永不回传**（只返回“是否已配置”），但本服务当前没有鉴权 ——
 > 能访问该页的人都可以修改配置并**写入**密钥。仅限本机 / 内网使用；
@@ -219,7 +222,7 @@ npm run dev
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/health` | 健康检查 + 当前模式 |
+| GET | `/api/health` | 健康检查 + 当前能力提供方 |
 | GET | `/api/search/sites` | 可选网站列表 |
 | POST | `/api/search/clothing` | 搜索服装图（`sites`, `query`, `count`） |
 | POST | `/api/tasks` | 勾选 N 张图 → 创建 N 个任务 |
@@ -268,24 +271,20 @@ cd backend
 
 ### 9.1 按能力切换（重要）
 
-`PROVIDER_MODE` 是**全局兑底**，但四个能力可以**分别**指定实现。这是必要的设计：
-如果只有一个全局开关，把 `PROVIDER_MODE` 改成 `real` 会同时启用 serpapi / fal 两个空壳，
-整条流水线会立即报错。
+能力**必须显式配置**：没有全局开关，也没有「留空回退」。在界面上的「能力配置」页
+（推荐，立即生效且持久化）逐项选择实现即可；provider 名写错会在**构造能力时立即报错**，
+启动日志还会提示端点 / Key / 模型是否缺失。
 
-改法有两种：**界面上的「能力配置」页**（推荐，立即生效且持久化），或环境变量：
+- 识别：`mock` / `openai_compatible`
+- 生图：`mock` / `openai_compatible_image`
+- 搜索类：仅 `mock`
 
-```bash
-# 只把「识别」与「生图」切到真实模型，搜图仍用 mock
-PROVIDER_MODE=mock
-MATERIAL_IDENTIFIER_PROVIDER=maas
-DESIGN_GENERATOR_PROVIDER=dashscope
-```
+> 环境变量**不再**参与能力配置（这是刻意去掉的兼容层）。
 
-provider 名写错会**启动即报错**（不是等第一个任务失败），启动日志还会提示仍是空壳的能力。
+### 9.2 已验证示例：阿里云 MaaS（OpenAI 兼容）
 
-### 9.2 已验证：阿里云 MaaS（OpenAI 兼容）
-
-同一个 base_url + 同一个 Key 同时提供视觉理解与生图能力。
+这是一种已验证的 OpenAI 兼容端点：同一个 base_url + 同一个 Key 同时提供视觉理解与生图能力。
+在各能力的设置里**分别**填入即可（两个能力并不共享配置）。
 
 | 能力 | 端点 | 模型 |
 |---|---|---|
@@ -315,10 +314,11 @@ python -m app.tools.probe --skip-image     # 只探识别
 
 ### 9.4 还没实现的 provider
 
-- `abilities/clothing_search/serpapi.py`、`abilities/material_search/serpapi.py`（占位）
-- `abilities/design_generate/fal.py`（占位，作为 dashscope 的备选保留）
+搜索类能力（搜索服装图 / 查找材质图）目前只有 mock 实现，设置页已明确标注「仅 Mock（暂无真实实现）」。
 
-补全后只需把 `serpapi` / `fal` 加到 `registry.py` 对应 builder 的可选值中即可。
+要新增真实实现：在 `abilities/<能力>/` 下加适配器类，再到 `settings_spec.py` 的 `ABILITY_SPECS`
+把该能力的 `options` 加上新 provider 名、`real_implemented` 设为 `True`，
+并在 `abilities/registry.py` 对应 builder 里分支即可（UI 与校验会自动跟随 spec）。
 
 **各能力推荐路线**（详见 `AI服装辅助设计方案.md`）：
 

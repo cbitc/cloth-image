@@ -133,6 +133,9 @@ export interface FieldSpec {
   min?: number;
   max?: number;
   pattern?: string;
+  placeholder?: string;
+  /** 仅当依赖字段取值命中时才显示，如 {"material_identifier_provider": ["openai_compatible"]} */
+  show_when?: Record<string, string[]>;
   help?: string;
 }
 
@@ -141,13 +144,14 @@ export interface FieldGroup {
   fields: FieldSpec[];
 }
 
-export type AbilityState = "ready" | "stub" | "missing_key";
+export type AbilityState = "ready" | "missing_key";
 
 export interface AbilityStatus {
   ability: string;
   label: string;
   signature: string;
   provider: string;
+  real_implemented: boolean;
   options: string[];
   state: AbilityState;
   state_label: string;
@@ -165,7 +169,6 @@ export interface SettingsView {
   values: Record<string, unknown>;
   secrets: Record<string, SecretState>;
   overridden: string[];
-  mode: string;
   abilities: Record<string, string>;
   warnings: string[];
   removed?: number;

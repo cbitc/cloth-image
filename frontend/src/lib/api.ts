@@ -36,7 +36,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => request<{ status: string; provider_mode: string }>("/api/health"),
+  health: () =>
+    request<{ status: string; abilities: Record<string, string> }>("/api/health"),
 
   listSites: () => request<{ mode: string; sites: SiteOption[] }>("/api/search/sites"),
 

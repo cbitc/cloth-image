@@ -12,15 +12,26 @@ os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'test.db').as_posix()}"
 os.environ["STORAGE_BACKEND"] = "local"
 os.environ["LOCAL_STORAGE_DIR"] = str(_TMP / "objects")
 os.environ["TASK_EXECUTION"] = "sync"
-os.environ["PROVIDER_MODE"] = "mock"
 os.environ["PUBLIC_BASE_URL"] = "http://testserver"
 
-# 显式锁定四个能力都用 mock，避免本机 .env / shell 变量把测试切到真实 provider
-os.environ["CLOTHING_SEARCH_PROVIDER"] = "mock"
-os.environ["MATERIAL_IDENTIFIER_PROVIDER"] = "mock"
-os.environ["MATERIAL_SEARCH_PROVIDER"] = "mock"
-os.environ["DESIGN_GENERATOR_PROVIDER"] = "mock"
-os.environ["MAAS_API_KEY"] = ""
+# 能力配置不再读环境变量（唯一来源是设置页 / 数据库），默认即全 mock。
+# 这里显式清掉可能残留的旧变量，避免本机 shell / .env 把它们带进测试进程。
+for _legacy in (
+    "PROVIDER_MODE",
+    "CLOTHING_SEARCH_PROVIDER",
+    "MATERIAL_IDENTIFIER_PROVIDER",
+    "MATERIAL_SEARCH_PROVIDER",
+    "DESIGN_GENERATOR_PROVIDER",
+    "MAAS_API_KEY",
+    "MAAS_BASE_URL",
+    "VLM_MODEL",
+    "IMAGE_MODEL",
+    "VLM_API_KEY",
+    "IMAGE_API_KEY",
+    "SERPAPI_API_KEY",
+    "FAL_KEY",
+):
+    os.environ.pop(_legacy, None)
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

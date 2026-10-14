@@ -1,15 +1,19 @@
-"""按能力切换 provider 的注册表测试。
+"""按能力构造 provider 的注册表测试。
 
-核心保证：只把部分能力切到真实实现时，其余环节仍用 mock 正常可用
-（否则 `PROVIDER_MODE=real` 会一脚踩到 serpapi / fal 空壳）。
+核心保证：能力配置是**显式**的（无全局兜底、无留空回退、无空壳 provider）；
+只有显式选中真实 provider 的能力才会走真实实现，其余能力保持 mock。
 """
 
 from __future__ import annotations
 
 import pytest
 
+from app.ability_config import AbilitySettings
 from app.abilities.clothing_search import MockClothingSearchProvider
-from app.abilities.design_generate import MockDesignGenerator, QwenImageGenerator
+from app.abilities.design_generate import (
+    MockDesignGenerator,
+    OpenAICompatibleImageGenerator,
+)
 from app.abilities.material_identify import (
     MockMaterialIdentifier,
     OpenAICompatibleVLMIdentifier,
@@ -20,18 +24,35 @@ from app.config import Settings
 
 
 def _settings(**overrides) -> Settings:
-    base: dict = {
-        "provider_mode": "mock",
-        "database_url": "sqlite:///:memory:",
-        "maas_api_key": "test-key",
-        "maas_base_url": "https://maas.test/v1",
-    }
+    base: dict = {"database_url": "sqlite:///:memory:"}
     base.update(overrides)
     return Settings(**base)
 
 
-def test_all_mock_when_provider_mode_is_mock() -> None:
-    abilities = build_abilities(_settings())
+def _identifier(**overrides) -> AbilitySettings:
+    base: dict = {
+        "material_identifier_provider": "openai_compatible",
+        "material_identifier_base_url": "https://endpoint.test/v1",
+        "material_identifier_api_key": "test-key",
+        "material_identifier_model": "qwen3-vl-plus",
+    }
+    base.update(overrides)
+    return AbilitySettings(**base)
+
+
+def _generator(**overrides) -> AbilitySettings:
+    base: dict = {
+        "design_generator_provider": "openai_compatible_image",
+        "design_generator_base_url": "https://endpoint.test/v1",
+        "design_generator_api_key": "test-key",
+        "design_generator_model": "qwen-image-3.0",
+    }
+    base.update(overrides)
+    return AbilitySettings(**base)
+
+
+def test_all_mock_by_default() -> None:
+    abilities = build_abilities(AbilitySettings(), _settings())
 
     assert abilities.mode == "mock"
     assert set(abilities.providers.values()) == {"mock"}
@@ -42,74 +63,77 @@ def test_all_mock_when_provider_mode_is_mock() -> None:
     assert abilities.real_providers == []
 
 
+def test_search_abilities_are_always_mock() -> None:
+    """搜索类能力没有真实实现：即使其它能力切换，它们仍是 mock。"""
+    abilities = build_abilities(_identifier(), _settings())
+
+    assert abilities.providers["clothing_search"] == "mock"
+    assert abilities.providers["material_search"] == "mock"
+    assert isinstance(abilities.clothing_search, MockClothingSearchProvider)
+    assert isinstance(abilities.material_search, MockMaterialImageSearchProvider)
+
+
 def test_switching_one_ability_yields_mixed_mode() -> None:
-    abilities = build_abilities(_settings(material_identifier_provider="maas"))
+    abilities = build_abilities(_identifier(), _settings())
 
     assert abilities.mode == "mixed"
     assert isinstance(abilities.material_identifier, OpenAICompatibleVLMIdentifier)
-    # 其余能力保持 mock，不受影响
-    assert isinstance(abilities.clothing_search, MockClothingSearchProvider)
     assert isinstance(abilities.design_generator, MockDesignGenerator)
-    assert abilities.real_providers == ["material_identifier=maas"]
+    assert abilities.real_providers == ["material_identifier=openai_compatible"]
 
 
-def test_image_generator_receives_settings() -> None:
+def test_identifier_receives_explicit_config() -> None:
     abilities = build_abilities(
-        _settings(
-            design_generator_provider="dashscope", image_model="qwen-image-3.0-pro"
-        )
+        _identifier(material_identifier_model="qwen3-vl-max"), _settings()
+    )
+
+    identifier = abilities.material_identifier
+    assert isinstance(identifier, OpenAICompatibleVLMIdentifier)
+    assert identifier.model == "qwen3-vl-max"
+    assert identifier.base_url == "https://endpoint.test/v1"
+
+
+def test_image_generator_receives_shared_settings() -> None:
+    abilities = build_abilities(
+        _generator(design_generator_model="qwen-image-3.0-pro"),
+        _settings(image_size="768x1024", image_max_refs=2),
     )
 
     generator = abilities.design_generator
-    assert isinstance(generator, QwenImageGenerator)
+    assert isinstance(generator, OpenAICompatibleImageGenerator)
     assert generator.model == "qwen-image-3.0-pro"
-    assert generator.size == "1024x1024"
-    assert generator.base_url == "https://maas.test/v1"
-
-
-def test_provider_mode_real_is_overridable_per_ability() -> None:
-    """全局 real + 单独把某能力退回 mock，是允许且有用的组合。"""
-    abilities = build_abilities(
-        _settings(
-            provider_mode="real",
-            material_identifier_provider="mock",
-            design_generator_provider="mock",
-            clothing_search_provider="mock",
-            material_search_provider="mock",
-        )
-    )
-
-    assert abilities.mode == "mock"
-    assert isinstance(abilities.material_identifier, MockMaterialIdentifier)
+    assert generator.size == "768x1024"
+    assert generator.base_url == "https://endpoint.test/v1"
 
 
 def test_unknown_provider_fails_fast_with_helpful_message() -> None:
     with pytest.raises(UnknownProvider) as info:
-        build_abilities(_settings(material_identifier_provider="gpt-5"))
+        build_abilities(
+            AbilitySettings(material_identifier_provider="gpt-5"), _settings()
+        )
 
     message = str(info.value)
     assert "material_identifier" in message
-    assert "mock" in message and "maas" in message
-
-
-def test_stub_provider_emits_warning() -> None:
-    settings = _settings(clothing_search_provider="serpapi")
-    abilities = build_abilities(settings)
-
-    warnings = config_warnings(settings, abilities)
-    assert any("NotImplementedError" in warning for warning in warnings)
+    assert "mock" in message and "openai_compatible" in message
 
 
 def test_missing_api_key_emits_warning() -> None:
-    settings = _settings(
-        material_identifier_provider="maas", maas_api_key="", vlm_api_key=""
-    )
-    abilities = build_abilities(settings)
+    ability = _identifier(material_identifier_api_key="")
+    abilities = build_abilities(ability, _settings())
 
-    warnings = config_warnings(settings, abilities)
-    assert any("MAAS_API_KEY" in warning for warning in warnings)
+    warnings = config_warnings(abilities, ability)
+    assert any("API Key" in warning for warning in warnings)
+
+
+def test_missing_endpoint_and_model_emit_warnings() -> None:
+    ability = _generator(design_generator_base_url="", design_generator_model="")
+    abilities = build_abilities(ability, _settings())
+
+    warnings = config_warnings(abilities, ability)
+    assert any("Base URL" in warning for warning in warnings)
+    assert any("模型" in warning for warning in warnings)
 
 
 def test_no_warnings_for_pure_mock_setup() -> None:
-    settings = _settings()
-    assert config_warnings(settings, build_abilities(settings)) == []
+    ability = AbilitySettings()
+    assert config_warnings(build_abilities(ability, _settings()), ability) == []

@@ -18,7 +18,7 @@ def _create_task(client, clothing_image_id: str, **kwargs) -> dict:
 def test_health(client) -> None:
     resp = client.get("/api/health")
     assert resp.status_code == 200
-    assert resp.json()["provider_mode"] == "mock"
+    assert set(resp.json()["abilities"].values()) == {"mock"}
 
 
 def test_search_clothing(client) -> None:
