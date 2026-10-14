@@ -121,6 +121,17 @@ class CreateTasksResponse(BaseModel):
     tasks: list[TaskSummary]
 
 
+class BulkDeleteTasksRequest(BaseModel):
+    """批量删除：按 id 列表（去重后删除，不存在的 id 不算失败）。"""
+
+    task_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class BulkDeleteTasksResponse(BaseModel):
+    deleted: int
+    not_found: list[str] = Field(default_factory=list)
+
+
 class MaterialTagInput(BaseModel):
     material: str
     material_en: str = ""

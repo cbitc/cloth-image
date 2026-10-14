@@ -88,6 +88,12 @@ export const api = {
 
   deleteTask: (id: string) => request<void>(`/api/tasks/${id}`, { method: "DELETE" }),
 
+  bulkDeleteTasks: (taskIds: string[]) =>
+    request<{ deleted: number; not_found: string[] }>("/api/tasks/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ task_ids: taskIds }),
+    }),
+
   // ---- 能力配置 ----
   settings: () => request<SettingsView>("/api/settings"),
 

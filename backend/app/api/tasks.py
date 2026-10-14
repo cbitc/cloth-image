@@ -9,6 +9,7 @@
   POST   /api/tasks/{id}/generate           ★检查点3：填设计想法 → 生成设计图
   POST   /api/tasks/{id}/retry            失败重试
   DELETE /api/tasks/{id}
+  POST   /api/tasks/bulk-delete          批量删除（按 id 列表）
   GET    /api/tasks/{id}/events           SSE 进度流
 """
 
@@ -24,6 +25,8 @@ from app.db.models import MaterialTag, Task
 from app.db.session import get_db
 from app.enums import TagSource, TaskStatus
 from app.schemas import (
+    BulkDeleteTasksRequest,
+    BulkDeleteTasksResponse,
     ConfirmMaterialsRequest,
     CreateTasksRequest,
     CreateTasksResponse,
@@ -96,6 +99,30 @@ def list_tasks(
         )
     tasks = db.execute(stmt).scalars().all()
     return [build_summary(t) for t in tasks]
+
+
+@router.post("/bulk-delete", response_model=BulkDeleteTasksResponse)
+def bulk_delete_tasks(
+    payload: BulkDeleteTasksRequest, db: Session = Depends(get_db)
+) -> BulkDeleteTasksResponse:
+    """批量删除任务。
+
+    - 与单删一致：不限制状态（进行中的任务也会被删；worker 对已删除任务是安全退出）。
+    - 材质 tag / 面料图 / 设计图 / 事件随 ORM 级联删除。
+    - 不存在的 id 不算失败，在 `not_found` 里返回，便于前端提示。
+    """
+    ids = list(dict.fromkeys(payload.task_ids))  # 去重且保序
+    tasks = db.execute(select(Task).where(Task.id.in_(ids))).scalars().all()
+
+    found = {task.id for task in tasks}
+    for task in tasks:
+        db.delete(task)
+    db.commit()
+
+    return BulkDeleteTasksResponse(
+        deleted=len(tasks),
+        not_found=[task_id for task_id in ids if task_id not in found],
+    )
 
 
 @router.get("/{task_id}", response_model=TaskDetail)

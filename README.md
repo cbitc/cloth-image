@@ -242,6 +242,7 @@ npm run dev
 | POST | `/api/tasks/{id}/generate` | ★检查点3：填设计想法 → 生成设计图 |
 | POST | `/api/tasks/{id}/retry` | 失败重试 |
 | DELETE | `/api/tasks/{id}` | 删除任务 |
+| POST | `/api/tasks/bulk-delete` | 批量删除任务（body：`{"task_ids": [...]}`，返回 `{deleted, not_found}`） |
 | GET | `/api/tasks/{id}/events` | **SSE** 任务进度流（`snapshot` / `event`） |
 | GET | `/api/events/stream` | **SSE** 看板任务列表流 |
 | GET | `/api/material-taxonomy` | 受控材质词表 |
