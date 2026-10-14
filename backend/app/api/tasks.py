@@ -64,7 +64,7 @@ def _now() -> datetime:
 def _advance(db: Session, task: Task, target: TaskStatus) -> None:
     """把任务推进到 `target` 并提交，**必须在派发后台任务之前**调用。
 
-    `inline` / `celery` 模式下派发是异步的（响应不阻塞）。若等 orchestrator 去改状态，
+    `inline` 模式下派发是异步的（响应不阻塞）。若等 orchestrator 去改状态，
     响应会带着**旧状态**返回：前端以为还停在 DONE，「再生成一版」按钮仍可点，
     再点一次就被状态守卫判 409。这里先把状态落库，保证响应内容就是真实状态。
     """

@@ -9,7 +9,6 @@ from pathlib import Path
 # 必须在导入 app.* 之前设置环境变量（Settings 有 lru_cache）
 _TMP = Path(tempfile.mkdtemp(prefix="cloth-test-"))
 os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP / 'test.db').as_posix()}"
-os.environ["STORAGE_BACKEND"] = "local"
 os.environ["LOCAL_STORAGE_DIR"] = str(_TMP / "objects")
 os.environ["TASK_EXECUTION"] = "sync"
 os.environ["PUBLIC_BASE_URL"] = "http://testserver"

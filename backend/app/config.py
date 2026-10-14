@@ -21,25 +21,16 @@ _OVERRIDES: dict[str, Any] = {}
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # 存储 / 数据库
+    # 数据库：本地 SQLite（零外部依赖）
     database_url: str = "sqlite:///./.data/app.db"
-    redis_url: str = "redis://localhost:6379/0"
 
-    # 任务执行：inline（进程内后台执行，便于本地与测试）| celery（需要 worker）
+    # 任务执行：sync（同步，测试用）| inline（进程内线程池，默认）
     task_execution: str = "inline"
 
-    # 对象存储：local（本地目录 + /media 静态服务）| s3（MinIO / S3 兼容）
-    storage_backend: str = "local"
+    # 图片存储：本地目录 + /media 路由对外提供
     local_storage_dir: str = str(BACKEND_DIR / ".data" / "objects")
     media_url_prefix: str = "/media"
     public_base_url: str = "http://localhost:8000"
-
-    s3_endpoint_url: str = "http://localhost:9000"
-    s3_public_endpoint_url: str = "http://localhost:9000"
-    s3_access_key: str = "minioadmin"
-    s3_secret_key: str = "minioadmin"
-    s3_bucket: str = "cloth-images"
-    s3_region: str = "us-east-1"
 
     # ------------------------------------------------------------------ #
     # 能力配置（provider / base_url / api_key / model）
@@ -70,21 +61,14 @@ class Settings(BaseSettings):
     # 服务目前无鉴权，对外暴露前应设为 false 或先加鉴权。
     settings_write_enabled: bool = True
 
-    # ------------------------------------------------------------------ #
-    # 派生配置
-    # ------------------------------------------------------------------ #
-    @property
-    def is_sqlite(self) -> bool:
-        return self.database_url.startswith("sqlite")
-
 
 @lru_cache
 def get_settings() -> Settings:
     """生效配置 = 环境变量/.env 打底，再叠加数据库里的用户覆盖项。
 
     改完覆盖项后必须调用 `apply_overrides()`，它会清掉这里的缓存。
-    注意：`database_url` / `storage_backend` 等启动期依赖的项**不在**可覆盖范围内
-    （引擎与存储客户端在导入时就已按环境变量建好）。
+    注意：`database_url` 等启动期依赖的项**不在**可覆盖范围内
+    （引擎在导入时就已按环境变量建好）。
     """
     base = Settings()
     if not _OVERRIDES:

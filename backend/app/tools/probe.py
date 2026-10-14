@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {result.model}  {result.external_url[:120]}")
         _dump_usage("生图", getattr(abilities.design_generator, "last_usage", None))
         print(
-            "\n  提示：生图返回的是临时地址；完整流水线里 orchestrator 会下载并镜像到自有存储。"
+            "\n  提示：生图返回的是临时地址；完整流水线里 orchestrator 会下载并镜像到本地存储。"
         )
 
     print("\n完成。")

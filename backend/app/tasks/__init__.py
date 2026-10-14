@@ -5,7 +5,6 @@ orchestrator / persist / serialize 请按需显式导入（如 `from app.tasks i
 """
 
 from app.tasks.dispatcher import (
-    CeleryDispatcher,
     InlineDispatcher,
     SyncDispatcher,
     get_dispatcher,
@@ -19,7 +18,6 @@ from app.tasks.state_machine import (
 )
 
 __all__ = [
-    "CeleryDispatcher",
     "InlineDispatcher",
     "SyncDispatcher",
     "get_dispatcher",

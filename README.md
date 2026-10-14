@@ -34,7 +34,7 @@ flowchart TB
     R["API 路由 /api/*"]
     O["任务编排器 orchestrator"]
     SM["状态机 state_machine"]
-    D["分发器 dispatcher<br/>sync / inline / celery"]
+    D["分发器 dispatcher<br/>sync / inline"]
     P["图片落盘 persist"]
   end
 
@@ -45,10 +45,9 @@ flowchart TB
     M4["design_generate"]
   end
 
-  subgraph INFRA["基础设施"]
-    PG[("PostgreSQL")]
-    RD[("Redis")]
-    S3[("MinIO / 本地目录")]
+  subgraph INFRA["本地基础设施"]
+    DB[("SQLite")]
+    FS[("本地图片目录")]
   end
 
   FE -->|REST + SSE| R
@@ -56,9 +55,8 @@ flowchart TB
   R --> SM
   O --> D
   O --> M1 & M2 & M3 & M4
-  O --> P --> S3
-  O --> PG
-  D -->|celery| RD
+  O --> P --> FS
+  O --> DB
 ```
 
 **任务驱动**：每张被选中的服装图 = 一个任务（`Task`），N 张图并发执行 N 条流水线，互不阻塞。
@@ -95,7 +93,7 @@ stateDiagram-v2
 
 ```
 cloth-image/
-├─ docker-compose.yml          # postgres / redis / minio / backend / worker / frontend
+├─ scripts/                    # 本地启停/构建脚本（setup / dev / build / start / test）
 ├─ .env.example                # 全部环境变量与默认值
 ├─ AI服装辅助设计方案.md         # 原始设计方案
 ├─ backend/
@@ -106,7 +104,7 @@ cloth-image/
 │     ├─ config.py             # pydantic-settings 配置
 │     ├─ enums.py              # TaskStatus / TagSource
 │     ├─ schemas.py            # API 契约（与前端 types.ts 对应）
-│     ├─ storage.py            # 对象存储抽象：local | s3(MinIO)
+│     ├─ storage.py            # 本地图片存储（目录 + /media URL）
 │     ├─ db/                   # SQLAlchemy 模型与会话
 │     ├─ ability_config.py     # ★ 能力配置（设置页写入，DB 为唯一来源，不读 env）
 │     ├─ abilities/            # ★ 能力适配器层
@@ -121,7 +119,7 @@ cloth-image/
 │     │  ├─ material_search/unsplash.py
 │     │  └─ design_generate/openai_compatible_image.py
 │     ├─ taxonomy/materials.yaml  # 受控材质词表（60 条，中英双语）
-│     ├─ tasks/                # 状态机 / 编排器 / 分发器 / worker / 持久化 / 序列化 / fetch(下载+镜像)
+│     ├─ tasks/                # 状态机 / 编排器 / 分发器 / 持久化 / 序列化 / fetch(下载+镜像)
 │     ├─ tools/probe.py        # 真实 provider 联调探针
 │     └─ api/                  # search / tasks / events(SSE) / taxonomy / media
 │  └─ tests/                   # 能力契约 / 状态机 / 端到端 / 适配器 / fakes（测试用假实现）
@@ -138,29 +136,37 @@ cloth-image/
 
 ## 5. 快速开始
 
-### 方式 A：Docker Compose（推荐，含 Postgres / Redis / MinIO）
+### 一键脚本（Windows PowerShell）
 
-```bash
-cp .env.example .env
-docker compose up --build
+```powershell
+.\scripts\setup.ps1   # 安装依赖（后端 venv + 前端 npm）并建库
+.\scripts\dev.ps1     # 启动后端 :8000（热重载）+ 前端 :3000
 ```
 
 - 前端 http://localhost:3000
 - 后端 API 文档 http://localhost:8000/docs
-- MinIO 控制台 http://localhost:9001 （minioadmin / minioadmin）
 
-该模式下 `TASK_EXECUTION=celery`，任务由独立 `worker` 容器消费。
+其它脚本：
 
-### 方式 B：本机直跑（零依赖，SQLite + 本地文件存储）
+| 脚本 | 作用 |
+|---|---|
+| `.\scripts\build.ps1` | 构建前端生产产物 + 后端预编译 + 类型检查 |
+| `.\scripts\start.ps1` | 生产启动（需先 build） |
+| `.\scripts\test.ps1` | 后端 pytest + 前端类型检查 |
+
+> 注意：`dev` 与 `build`/`start` 不要同时使用 —— `npm run dev` 会重写 `.next`，使生产构建失效。
+> 生产启动顺序：`build.ps1`（先停掉 dev）→ `start.ps1`。
+
+### 手动步骤（等价）
 
 后端：
 
 ```bash
 cd backend
 python -m venv .venv
-.venv\Scripts\activate          # Windows（macOS/Linux: source .venv/bin/activate）
+.venv\Scripts\activate                                  # Windows（macOS/Linux: source .venv/bin/activate）
 pip install -e ".[dev]"
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000                 # 首次启动会自动建表（SQLite）
 ```
 
 前端：
@@ -168,11 +174,11 @@ uvicorn app.main:app --reload --port 8000
 ```bash
 cd frontend
 npm install
-$env:NEXT_PUBLIC_API_BASE_URL="http://localhost:8000"   # Windows PowerShell
-npm run dev
+npm run dev          # 默认连 http://localhost:8000
 ```
 
-访问 http://localhost:3000 。该模式默认 `STORAGE_BACKEND=local`、`TASK_EXECUTION=inline`（线程池后台执行）。
+默认使用 **SQLite + 本地目录 + 进程内线程池**，无需任何外部服务（不需要 Docker / Postgres / Redis / MinIO）。
+如前端要指向别的后端地址，先设 `NEXT_PUBLIC_API_BASE_URL` 再启动。
 
 ---
 
@@ -190,9 +196,8 @@ npm run dev
 | `PROVIDER_TIMEOUT_S` | `90` | 外部调用超时（秒） |
 | `PROVIDER_MAX_RETRIES` | `3` | 外部调用失败重试次数 |
 | `VISION_MAX_IMAGE_SIDE` | `1568` | 送模型前图片等比缩放的最长边 |
-| `TASK_EXECUTION` | `inline` | `sync` 同步（测试）/ `inline` 线程池 / `celery` 队列 |
-| `STORAGE_BACKEND` | `local` | `local` 本地目录 + `/media` / `s3` MinIO |
-| `DATABASE_URL` | sqlite | 本机 SQLite；Compose 内为 Postgres |
+| `TASK_EXECUTION` | `inline` | `sync` 同步（测试）/ `inline` 线程池（默认） |
+| `DATABASE_URL` | sqlite | 本机 SQLite |
 
 > 上表中的项可由环境变量提供默认值、也可在设置页覆盖；**能力配置项则完全来自设置页**。
 

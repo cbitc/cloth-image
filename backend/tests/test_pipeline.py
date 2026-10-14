@@ -236,7 +236,7 @@ class _NoopDispatcher:
 
 
 def _override_dispatcher(noop: _NoopDispatcher):
-    """把 dispatcher 换成不执行的版本，模拟 inline/celery 的「异步派发」。"""
+    """把 dispatcher 换成不执行的版本，模拟 inline 的「异步派发」。"""
     from app.api import tasks as tasks_api
     from app.main import app
 

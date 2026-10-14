@@ -31,8 +31,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("app")
 
-settings = get_settings()
-
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -94,8 +92,7 @@ app.include_router(events.router)
 app.include_router(taxonomy.router)
 app.include_router(cache.router)
 app.include_router(settings_api.router)
-if settings.storage_backend == "local":
-    app.include_router(media.router)
+app.include_router(media.router)
 
 
 @app.get("/api/health", tags=["meta"])
@@ -106,6 +103,5 @@ def health() -> dict:
         "status": "ok",
         "version": __version__,
         "abilities": abilities.providers,
-        "storage_backend": effective.storage_backend,
         "task_execution": effective.task_execution,
     }
