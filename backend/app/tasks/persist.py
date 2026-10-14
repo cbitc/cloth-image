@@ -18,6 +18,8 @@ class PersistedImage:
     thumbnail_url: str
     storage_key: str
     thumbnail_key: str
+    #: 内容 sha256 前 32 位；识别结果缓存与去重都用它。外部图未知时为空串
+    image_hash: str = ""
 
 
 def _digest(data: bytes) -> str:
@@ -48,6 +50,7 @@ def persist_bytes(
         thumbnail_url=storage.url_for(thumb_key),
         storage_key=key,
         thumbnail_key=thumb_key,
+        image_hash=digest,
     )
 
 

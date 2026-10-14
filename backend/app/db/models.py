@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Float,
@@ -22,6 +24,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -46,6 +49,8 @@ class ClothingImage(Base):
     image_url: Mapped[str] = mapped_column(Text)
     thumbnail_url: Mapped[str] = mapped_column(Text)
     storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 图片内容的 sha256（前 32 位）—— 用于识别结果缓存与去重，外链图可能为空
+    image_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
     page_url: Mapped[str] = mapped_column(Text, default="")
     title: Mapped[str] = mapped_column(Text, default="")
     site: Mapped[str] = mapped_column(String(64), default="")
@@ -150,7 +155,6 @@ class DesignImage(Base):
 
 class TaskEvent(Base):
     __tablename__ = "task_event"
-
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     task_id: Mapped[str] = mapped_column(ForeignKey("task.id"), index=True)
 
@@ -161,3 +165,47 @@ class TaskEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     task: Mapped[Task] = relationship(back_populates="events")
+
+
+class IdentifyCache(Base):
+    """材质识别结果缓存。
+
+    同一张图（image_hash）+ 同一个模型 → 直接复用上次的识别结果，
+    省掉一次 VLM 调用（实测单次约 1500 tokens）。
+    模型名参与 key，因此换模型后缓存自动失效，不会串味。
+    """
+
+    __tablename__ = "identify_cache"
+    __table_args__ = (
+        UniqueConstraint("image_hash", "model", name="uq_identify_cache_hash_model"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    image_hash: Mapped[str] = mapped_column(String(64), index=True)
+    model: Mapped[str] = mapped_column(String(64), index=True)
+
+    #: 序列化后的 tag 列表（MaterialTagResult 的字段子集）
+    payload: Mapped[list] = mapped_column(JSON, default=list)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_used_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now
+    )
+
+
+class AppSetting(Base):
+    """运行时配置覆盖项（在设置页由用户自行修改）。
+
+    优先级：数据库覆盖 > 环境变量 / .env > 代码默认值。
+    只存被用户改动过的键；删掉记录即回退到环境变量。
+    """
+
+    __tablename__ = "app_setting"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[Any] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )

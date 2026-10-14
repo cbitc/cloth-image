@@ -117,3 +117,63 @@ export interface SiteOption {
   id: string;
   label: string;
 }
+
+// --------------------------------------------------------------------------- //
+// 能力配置（设置页）
+// --------------------------------------------------------------------------- //
+export type FieldType = "select" | "text" | "secret" | "int" | "float" | "bool";
+
+export interface FieldSpec {
+  name: string;
+  label: string;
+  group: string;
+  type: FieldType;
+  choices?: string[];
+  option_labels?: Record<string, string>;
+  min?: number;
+  max?: number;
+  pattern?: string;
+  help?: string;
+}
+
+export interface FieldGroup {
+  name: string;
+  fields: FieldSpec[];
+}
+
+export type AbilityState = "ready" | "stub" | "missing_key";
+
+export interface AbilityStatus {
+  ability: string;
+  label: string;
+  signature: string;
+  provider: string;
+  options: string[];
+  state: AbilityState;
+  state_label: string;
+  hint: string;
+}
+
+export interface SecretState {
+  configured: boolean;
+  overridden: boolean;
+}
+
+export interface SettingsView {
+  ability_status: AbilityStatus[];
+  groups: FieldGroup[];
+  values: Record<string, unknown>;
+  secrets: Record<string, SecretState>;
+  overridden: string[];
+  mode: string;
+  abilities: Record<string, string>;
+  warnings: string[];
+  removed?: number;
+}
+
+export interface IdentifyCacheStats {
+  entries: number;
+  total_hits: number;
+  saved_tokens: number;
+  models: string[];
+}

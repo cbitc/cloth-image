@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
+
+#: 运行时覆盖项（由设置页写入数据库后加载进来）。优先级高于环境变量。
+#: 用模块级字典而非改 Settings 字段，是为了让所有既有的 get_settings() 调用点无需改动。
+_OVERRIDES: dict[str, Any] = {}
 
 
 class Settings(BaseSettings):
@@ -82,6 +87,12 @@ class Settings(BaseSettings):
     identify_top_k: int = 4
     material_images_per_tag: int = 3
     design_candidates: int = 3
+    # 相同图片 + 相同模型时复用识别结果（省一次 VLM 调用，约 1500 tokens）
+    identify_cache_enabled: bool = True
+
+    # 是否允许通过 /api/settings 修改配置。
+    # 服务目前无鉴权，对外暴露前应设为 false 或先加鉴权。
+    settings_write_enabled: bool = True
 
     # ------------------------------------------------------------------ #
     # 派生配置
@@ -126,4 +137,33 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    """生效配置 = 环境变量/.env 打底，再叠加数据库里的用户覆盖项。
+
+    改完覆盖项后必须调用 `apply_overrides()`，它会清掉这里的缓存。
+    注意：`database_url` / `storage_backend` 等启动期依赖的项**不在**可覆盖范围内
+    （引擎与存储客户端在导入时就已按环境变量建好）。
+    """
+    base = Settings()
+    if not _OVERRIDES:
+        return base
+    return base.model_copy(update=dict(_OVERRIDES))
+
+
+def current_overrides() -> dict[str, Any]:
+    """当前生效的覆盖项快照。"""
+    return dict(_OVERRIDES)
+
+
+def apply_overrides(values: Mapping[str, Any] | None) -> None:
+    """替换覆盖集合并清缓存。
+
+    调用方若需要让能力实现重新构建，还应调用
+    `app.abilities.registry.reset_abilities_cache()`。
+    """
+    _OVERRIDES.clear()
+    _OVERRIDES.update(values or {})
+    get_settings.cache_clear()
+
+
+def reset_settings_cache() -> None:
+    get_settings.cache_clear()

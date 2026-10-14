@@ -54,6 +54,7 @@ def search_clothing(
             image_url=persisted.image_url,
             thumbnail_url=persisted.thumbnail_url,
             storage_key=persisted.storage_key or None,
+            image_hash=persisted.image_hash,
             page_url=result.page_url,
             title=result.title,
             site=result.site,

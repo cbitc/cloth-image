@@ -2,9 +2,11 @@ import type {
   ClothingImage,
   CreateTasksResponse,
   DesignImage,
+  IdentifyCacheStats,
   MaterialTagDef,
   MaterialTagInput,
   SearchClothingResponse,
+  SettingsView,
   SiteOption,
   TaskDetail,
   TaskSummary,
@@ -84,6 +86,25 @@ export const api = {
     request<TaskDetail>(`/api/tasks/${id}/retry`, { method: "POST" }),
 
   deleteTask: (id: string) => request<void>(`/api/tasks/${id}`, { method: "DELETE" }),
+
+  // ---- 能力配置 ----
+  settings: () => request<SettingsView>("/api/settings"),
+
+  updateSettings: (values: Record<string, unknown>) =>
+    request<SettingsView>("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ values }),
+    }),
+
+  resetSettings: () => request<SettingsView>("/api/settings", { method: "DELETE" }),
+
+  cacheStats: () => request<IdentifyCacheStats>("/api/cache/identify/stats"),
+
+  clearCache: (model?: string) =>
+    request<{ removed: number }>(
+      `/api/cache/identify${model ? `?model=${encodeURIComponent(model)}` : ""}`,
+      { method: "DELETE" },
+    ),
 };
 
 export const taskEventsUrl = (id: string) => `${API_BASE}/api/tasks/${id}/events`;

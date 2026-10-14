@@ -191,9 +191,27 @@ npm run dev
 | `IMAGE_MODEL` | `qwen-image-3.0` | 生图模型 |
 | `IMAGE_SIZE` | `1024x1024` | **必须用 `x` 分隔**，写成 `1024*1024` 会被 API 拒绝 |
 | `IMAGE_MAX_REFS` | `3` | 参考图上限；实测 `qwen-image-3.0` 只支持 0~3 张 |
+| `IDENTIFY_CACHE_ENABLED` | `true` | 相同图片 + 相同模型时复用识别结果 |
 | `TASK_EXECUTION` | `inline` | `sync` 同步（测试）/ `inline` 线程池 / `celery` 队列 |
 | `STORAGE_BACKEND` | `local` | `local` 本地目录 + `/media` / `s3` MinIO |
 | `DATABASE_URL` | sqlite | 本机 SQLite；Compose 内为 Postgres |
+
+### 6.1 在界面上配置（无需改 .env）
+
+打开 `http://localhost:3000/settings`，可以完成全部能力相关配置：
+
+- **四个能力逐个选 provider**（mock / 真实实现），并直接看到每个能力的**可用状态**：
+  `可用` / `占位实现`（serpapi / fal 仍是空壳，选中也没用）/ `缺少 Key`
+- 填入 MaaS 端点、API Key、识别模型、生图模型、生图尺寸、参考图上限等
+- 调整流水线参数（候选数、每个 tag 几张图、识别缓存开关）与 HTTP 超时/重试
+- 查看识别缓存的命中数与估算省下的 token，并可一键清空
+
+**配置优先级**：`设置页（数据库 app_setting）` > `环境变量 / .env` > `代码默认值`。
+设置页**只保存你改动过的项**，未改动的继续跟随环境变量；用「重置为环境变量」可一键清空全部覆盖。
+
+> ⚠️ 密钥**永不回传**（只返回“是否已配置”），但本服务当前没有鉴权 ——
+> 能访问该页的人都可以修改配置并**写入**密钥。仅限本机 / 内网使用；
+> 对外暴露前请设 `SETTINGS_WRITE_ENABLED=false`（只读查看）或先补上鉴权。
 
 ---
 
@@ -215,6 +233,22 @@ npm run dev
 | GET | `/api/tasks/{id}/events` | **SSE** 任务进度流（`snapshot` / `event`） |
 | GET | `/api/events/stream` | **SSE** 看板任务列表流 |
 | GET | `/api/material-taxonomy` | 受控材质词表 |
+| GET | `/api/cache/identify/stats` | 识别缓存规模 / 累计命中 / 估算省下的 token |
+| DELETE | `/api/cache/identify` | 清空识别缓存（可选 `?model=` 只清某个模型） |
+| GET | `/api/settings` | 能力配置：字段清单 + 取值 + 密钥状态 + 能力可用状态 |
+| PUT | `/api/settings` | 部分更新配置（`{"values": {...}}`；值为 `null` 表示删除覆盖） |
+| DELETE | `/api/settings` | 清空全部覆盖，回退到环境变量 / 默认值 |
+
+### 7.1 识别结果缓存
+
+同一张图 + 同一个模型 → 直接复用上次的识别结果，跳过 VLM 调用。
+实测单次识别约 **1500 tokens**，而「同一张图建多个任务」是常见操作，收益直接。
+
+- 缓存 key = `(图片内容 sha256[:32], 模型名)`；**模型名参与 key**，换模型后旧缓存自然失效
+- 图片哈希在落盘时顺带算出，存在 `clothing_image.image_hash`
+- 命中时会在任务事件里写明「命中识别缓存…省约 N tokens」，前端执行日志可见
+- 外链图未下载时算不出哈希，此时不缓存（不影响功能）
+- 缓存内容损坏会自动丢弃并重新识别
 
 ---
 
@@ -237,6 +271,8 @@ cd backend
 `PROVIDER_MODE` 是**全局兑底**，但四个能力可以**分别**指定实现。这是必要的设计：
 如果只有一个全局开关，把 `PROVIDER_MODE` 改成 `real` 会同时启用 serpapi / fal 两个空壳，
 整条流水线会立即报错。
+
+改法有两种：**界面上的「能力配置」页**（推荐，立即生效且持久化），或环境变量：
 
 ```bash
 # 只把「识别」与「生图」切到真实模型，搜图仍用 mock
@@ -301,6 +337,10 @@ python -m app.tools.probe --skip-image     # 只探识别
 3. **成本**：VLM 识别约 $0.001–0.01/张，图生图约 $0.02–0.08/张，单任务全链路约 $0.05–0.15。
 4. **识别准确率**：光泽类材质（真丝 vs 醋酸 vs 缎面涤纶）单图难区分，
    「可能度分析 + 人工确认」是必要设计，不追求全自动 100% 准确。
+5. **配置页无鉴权**：`/api/settings` 可以写入密钥。仅限本机 / 内网使用；
+   对外部署前必须补鉴权或设 `SETTINGS_WRITE_ENABLED=false`。
+6. **密钥不要写进 `.env.example`**：该文件**不在** `.gitignore` 里，会被提交；
+   真实密钥只写在本地 `.env`（已忽略）。
 
 ---
 
@@ -309,5 +349,5 @@ python -m app.tools.probe --skip-image     # 只探识别
 - 自建材质图向量库（一次性覆盖常用材质，零外部 API 成本）
 - 多模型对比生成（同一任务并行多个生成模型）
 - 编辑链迭代（以某张结果图为新输入继续生成，Kontext 系列 ID 保持能力更优）
-- 成本控制与缓存（相同图片 sha256 跳过重复识别；`persist.py` 已按内容哈希去重存储）
+- 成本核算与预估（当前只有 token 用量事件；API 不返回金额，需按单价自算）
 - 用户体系与任务配额

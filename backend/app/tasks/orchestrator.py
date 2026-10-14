@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import datetime, timezone
 
@@ -25,6 +26,7 @@ from app.db.models import (
 from app.db.session import SessionLocal
 from app.enums import TagSource, TaskStatus
 from app.storage import get_storage
+from app.tasks import cache
 from app.tasks.fetch import fetch_image_bytes, mirror_image
 from app.tasks.persist import PersistedImage, persist_bytes, resolve_image
 from app.tasks.state_machine import (
@@ -129,6 +131,13 @@ def create_tasks(
     return tasks
 
 
+def _hash_bytes(data: bytes | None) -> str:
+    """图片内容哈希（与 persist 用同一算法），用于识别缓存。"""
+    if not data:
+        return ""
+    return hashlib.sha256(data).hexdigest()[:32]
+
+
 def _usage_suffix(model: str | None, usage: dict | None) -> str:
     """把模型名与 token 用量拼成事件文案后缀，便于从日志估算成本。"""
     parts: list[str] = []
@@ -197,14 +206,45 @@ def run_identify(task_id: str) -> None:
             db.commit()
 
             abilities = get_abilities()
+            settings = get_settings()
             clothing = task.clothing_image
+            identifier = abilities.material_identifier
+            model_name = getattr(identifier, "model", None) or identifier.name
+
             image_bytes, content_type = _load_source_image(db, task, clothing)
-            tags = abilities.material_identifier.identify(
-                image_bytes=image_bytes,
-                content_type=content_type,
-                image_url=clothing.image_url,
-                context_title=clothing.title,
-            )
+            image_hash = clothing.image_hash or _hash_bytes(image_bytes)
+
+            tags: list[MaterialTagResult] = []
+            saved_tokens = 0
+            cache_hit = False
+            if settings.identify_cache_enabled and image_hash:
+                tags, saved_tokens = cache.lookup(db, image_hash, model_name)
+                cache_hit = bool(tags)
+
+            if cache_hit:
+                _emit(
+                    db,
+                    task,
+                    "identify",
+                    "命中识别缓存（%s），跳过模型调用，省约 %d tokens"
+                    % (model_name, saved_tokens),
+                )
+            else:
+                tags = identifier.identify(
+                    image_bytes=image_bytes,
+                    content_type=content_type,
+                    image_url=clothing.image_url,
+                    context_title=clothing.title,
+                )
+                if settings.identify_cache_enabled and image_hash and tags:
+                    usage = getattr(identifier, "last_usage", None) or {}
+                    cache.store(
+                        db,
+                        image_hash,
+                        model_name,
+                        tags,
+                        int(usage.get("total_tokens") or 0),
+                    )
 
             for old in list(task.material_tags):
                 db.delete(old)
@@ -234,7 +274,9 @@ def run_identify(task_id: str) -> None:
                 "识别出 %d 个材质候选，等待人工确认%s"
                 % (
                     len(tags),
-                    _usage_suffix(
+                    ""
+                    if cache_hit
+                    else _usage_suffix(
                         getattr(abilities.material_identifier, "model", None),
                         getattr(abilities.material_identifier, "last_usage", None),
                     ),

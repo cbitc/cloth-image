@@ -30,9 +30,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               >
                 任务看板
               </Link>
+              <Link
+                className="rounded-lg px-3 py-1.5 hover:bg-white/5 hover:text-slate-100"
+                href="/settings"
+              >
+                能力配置
+              </Link>
             </nav>
             <span className="ml-auto text-xs text-slate-500">
-              Mock 模式 · 全链路可替换为真实 API
+              默认 Mock 模式 · 可在「能力配置」切换真实模型
             </span>
           </div>
         </header>

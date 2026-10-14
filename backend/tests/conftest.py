@@ -26,12 +26,24 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 
-@pytest.fixture(scope="session")
-def client():
+@pytest.fixture(scope="session", autouse=True)
+def _database():
+    """所有测试开始前建表。
+
+    用 autouse 而不是挂在 client 上：有些测试（如缓存单测）直接用 SessionLocal，
+    不经过 TestClient，否则会建表缺失。
+    """
+    from app.db import models  # noqa: F401  确保模型注册
     from app.db.session import Base, engine
-    from app.main import app
 
     Base.metadata.create_all(bind=engine)
+    yield
+
+
+@pytest.fixture(scope="session")
+def client(_database):
+    from app.main import app
+
     with TestClient(app) as test_client:
         yield test_client
 
