@@ -165,3 +165,143 @@ def test_board_stream_lists_tasks(client, sample_clothing_image_id) -> None:
     resp = client.get("/api/tasks?limit=5")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+def test_generate_again_from_done(client, sample_clothing_image_id) -> None:
+    """DONE 之后再点「再生成一版」应允许（DONE → GENERATING），且替换旧候选。"""
+    task = _create_task(client, sample_clothing_image_id)
+    task_id = task["id"]
+
+    detail = client.get(f"/api/tasks/{task_id}").json()
+    tags = [
+        {
+            "material": t["material"],
+            "confidence": t["confidence"],
+            "evidence": t["evidence"],
+        }
+        for t in detail["material_tags"]
+    ]
+    client.post(f"/api/tasks/{task_id}/confirm-materials", json={"tags": tags})
+
+    first = client.post(
+        f"/api/tasks/{task_id}/generate",
+        json={"design_idea": DESIGN_IDEA, "num_candidates": 2},
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == TaskStatus.DONE
+
+    again = client.post(
+        f"/api/tasks/{task_id}/generate",
+        json={"design_idea": f"{DESIGN_IDEA}，袖子改短", "num_candidates": 3},
+    )
+    assert again.status_code == 200, again.text
+    body = again.json()
+    assert body["status"] == TaskStatus.DONE
+    assert len(body["design_images"]) == 3  # 换一版：替换而不是累加
+
+
+def test_generate_conflict_detail_names_current_status(
+    client, sample_clothing_image_id
+) -> None:
+    """非法时机的 409 要带上当前状态，前端才能提示「正在生成中」之类的信息。"""
+    task = _create_task(client, sample_clothing_image_id)
+    current = client.get(f"/api/tasks/{task['id']}").json()["status"]
+
+    resp = client.post(
+        f"/api/tasks/{task['id']}/generate",
+        json={"design_idea": "x", "num_candidates": 1},
+    )
+    assert resp.status_code == 409
+    assert current in resp.json()["detail"]
+
+
+class _NoopDispatcher:
+    """只记录派发、不真正执行 —— 用来验证「接口自己先落状态」。"""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def dispatch_identify(self, task_id: str) -> None:
+        self.calls.append("identify")
+
+    def dispatch_material_search(self, task_id: str) -> None:
+        self.calls.append("material_search")
+
+    def dispatch_generate(
+        self,
+        task_id: str,
+        design_idea: str | None = None,
+        num_candidates: int | None = None,
+    ) -> None:
+        self.calls.append("generate")
+
+
+def _override_dispatcher(noop: _NoopDispatcher):
+    """把 dispatcher 换成不执行的版本，模拟 inline/celery 的「异步派发」。"""
+    from app.api import tasks as tasks_api
+    from app.main import app
+
+    app.dependency_overrides[tasks_api.get_dispatcher] = lambda: noop
+    return app, tasks_api
+
+
+def test_generate_reports_generating_before_background_runs(
+    client, sample_clothing_image_id
+) -> None:
+    """派发是异步的：接口必须先把状态落成 GENERATING 再返回。
+
+    否则响应带旧状态（DONE）回去，前端以为「再生成一版」还能点，再点就 409。
+    """
+    task = _create_task(client, sample_clothing_image_id)
+    task_id = task["id"]
+    detail = client.get(f"/api/tasks/{task_id}").json()
+    tags = [
+        {
+            "material": t["material"],
+            "confidence": t["confidence"],
+            "evidence": t["evidence"],
+        }
+        for t in detail["material_tags"]
+    ]
+    client.post(f"/api/tasks/{task_id}/confirm-materials", json={"tags": tags})
+
+    noop = _NoopDispatcher()
+    app, tasks_api = _override_dispatcher(noop)
+    try:
+        resp = client.post(
+            f"/api/tasks/{task_id}/generate",
+            json={"design_idea": DESIGN_IDEA, "num_candidates": 2},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == TaskStatus.GENERATING
+        assert noop.calls == ["generate"]
+    finally:
+        app.dependency_overrides.pop(tasks_api.get_dispatcher, None)
+
+
+def test_confirm_materials_reports_searching_before_background_runs(
+    client, sample_clothing_image_id
+) -> None:
+    task = _create_task(client, sample_clothing_image_id)
+    task_id = task["id"]
+    detail = client.get(f"/api/tasks/{task_id}").json()
+    tags = [
+        {
+            "material": t["material"],
+            "confidence": t["confidence"],
+            "evidence": t["evidence"],
+        }
+        for t in detail["material_tags"]
+    ]
+
+    noop = _NoopDispatcher()
+    app, tasks_api = _override_dispatcher(noop)
+    try:
+        resp = client.post(
+            f"/api/tasks/{task_id}/confirm-materials", json={"tags": tags}
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == TaskStatus.MATERIAL_SEARCH
+        assert noop.calls == ["material_search"]
+    finally:
+        app.dependency_overrides.pop(tasks_api.get_dispatcher, None)

@@ -11,14 +11,15 @@ import { TagEditor } from "@/components/TagEditor";
 import { Button, Card, EmptyState, ErrorText, SectionTitle, Spinner } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useTaskEvents } from "@/lib/hooks";
-import { formatTime } from "@/lib/taskStatus";
+import { formatTime, isTerminal } from "@/lib/taskStatus";
 import type { MaterialTagDef, MaterialTagInput, TaskDetail } from "@/lib/types";
 
 export default function TaskDetailPage() {
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
 
-  const { task, events, setTask } = useTaskEvents(id);
+  const [reloadKey, setReloadKey] = useState(0);
+  const { task, events, setTask } = useTaskEvents(id, null, reloadKey);
   const [taxonomy, setTaxonomy] = useState<MaterialTagDef[]>([]);
   const [draftTags, setDraftTags] = useState<MaterialTagInput[]>([]);
   const [selectedMaterials, setSelectedMaterials] = useState<Set<string>>(new Set());
@@ -89,14 +90,23 @@ export default function TaskDetailPage() {
     }
   }, [task]);
 
-  async function run<T>(action: () => Promise<TaskDetail>) {
+  async function run(action: () => Promise<TaskDetail>) {
     setBusy(true);
     setError(null);
     try {
       const data = await action();
       setTask(data);
+      // 任务回到非终态（例如 DONE 后「再生成一版」）时重新订阅 SSE：
+      // 流在到达终态时已关闭，不重订的话界面会一直停在旧状态
+      if (!isTerminal(data.status)) setReloadKey((key) => key + 1);
     } catch (err) {
       setError((err as Error).message);
+      // 多半是本地状态落后于服务端（409 之类）：重新拉一次，让界面回到真实状态
+      try {
+        setTask(await api.getTask(id));
+      } catch {
+        /* 任务可能已被删除，忽略 */
+      }
     } finally {
       setBusy(false);
     }

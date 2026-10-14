@@ -61,6 +61,18 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _advance(db: Session, task: Task, target: TaskStatus) -> None:
+    """把任务推进到 `target` 并提交，**必须在派发后台任务之前**调用。
+
+    `inline` / `celery` 模式下派发是异步的（响应不阻塞）。若等 orchestrator 去改状态，
+    响应会带着**旧状态**返回：前端以为还停在 DONE，「再生成一版」按钮仍可点，
+    再点一次就被状态守卫判 409。这里先把状态落库，保证响应内容就是真实状态。
+    """
+    task.status = str(target)
+    task.updated_at = _now()
+    db.commit()
+
+
 @router.post("", response_model=CreateTasksResponse, status_code=201)
 def create_tasks(
     payload: CreateTasksRequest,
@@ -164,6 +176,7 @@ def confirm_materials(
         )
     db.commit()
 
+    _advance(db, task, TaskStatus.MATERIAL_SEARCH)
     dispatcher.dispatch_material_search(task.id)
     db.expire_all()
     return build_detail(_get_task(db, task_id))
@@ -214,6 +227,7 @@ def generate(
         raise HTTPException(status_code=400, detail="请填写设计想法")
     db.commit()
 
+    _advance(db, task, TaskStatus.GENERATING)
     dispatcher.dispatch_generate(task.id, task.design_idea, payload.num_candidates)
     db.expire_all()
     return build_detail(_get_task(db, task_id))

@@ -6,8 +6,16 @@ import { boardStreamUrl, taskEventsUrl } from "./api";
 import { isTerminal } from "./taskStatus";
 import type { TaskDetail, TaskEvent, TaskSummary } from "./types";
 
-/** 订阅单个任务的 SSE 进度流。 */
-export function useTaskEvents(taskId: string, initial?: TaskDetail | null) {
+/** 订阅单个任务的 SSE 进度流。
+ *
+ * `reloadKey` 变化会重新订阅：流在任务到达终态时会自动关闭，
+ * 若之后任务又进入非终态（如 DONE → 再生成一版），需要重新订阅才能继续跟踪。
+ */
+export function useTaskEvents(
+  taskId: string,
+  initial?: TaskDetail | null,
+  reloadKey = 0,
+) {
   const [task, setTask] = useState<TaskDetail | null>(initial ?? null);
   const [events, setEvents] = useState<TaskEvent[]>(initial?.events ?? []);
   const closedRef = useRef(false);
@@ -33,7 +41,7 @@ export function useTaskEvents(taskId: string, initial?: TaskDetail | null) {
     });
 
     return () => source.close();
-  }, [taskId]);
+  }, [taskId, reloadKey]);
 
   return { task, events, setTask };
 }
