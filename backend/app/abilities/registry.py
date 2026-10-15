@@ -8,7 +8,7 @@ provider 按协议命名（不绑定厂商），可选实现：
   clothing_search     : unsplash
   material_search     : unsplash
   material_identifier : openai_compatible
-  design_generator    : openai_compatible_image
+  design_generator    : openai_compatible_image / comfyui
 
 未选择实现（provider 为空）的能力得到一个占位实现，调用时抛
 `AbilityNotConfigured`；应用本身照常启动（保证设置页可达）。
@@ -25,6 +25,7 @@ from app.ability_config import AbilitySettings, get_ability_settings
 from app.abilities.base import Abilities
 from app.abilities.http import ProviderError
 from app.config import Settings, get_settings
+from app.settings_spec import required_fields
 
 
 class UnknownProvider(ValueError):
@@ -118,10 +119,30 @@ def _make_openai_image(ability: AbilitySettings, settings: Settings) -> Any:
     )
 
 
+def _make_comfyui_image(ability: AbilitySettings, settings: Settings) -> Any:
+    from app.abilities.design_generate import ComfyUIImageGenerator
+
+    return ComfyUIImageGenerator(
+        base_url=ability.design_generator_base_url,
+        model=ability.design_generator_model,
+        preset=ability.design_generator_comfyui_preset,
+        workflow_json=ability.design_generator_comfyui_workflow,
+        lora=ability.design_generator_comfyui_lora,
+        size=settings.image_size,
+        steps=ability.design_generator_comfyui_steps,
+        cfg=ability.design_generator_comfyui_cfg,
+        max_refs=settings.image_max_refs,
+        download_max_bytes=settings.download_max_bytes,
+        timeout_s=settings.provider_timeout_s,
+        max_retries=settings.provider_max_retries,
+    )
+
+
 register_provider("clothing_search", "unsplash", _make_unsplash_clothing)
 register_provider("material_search", "unsplash", _make_unsplash_material)
 register_provider("material_identifier", "openai_compatible", _make_openai_identifier)
 register_provider("design_generator", "openai_compatible_image", _make_openai_image)
+register_provider("design_generator", "comfyui", _make_comfyui_image)
 
 
 # --------------------------------------------------------------------------- #
@@ -222,14 +243,9 @@ def build_abilities(ability: AbilitySettings, settings: Settings) -> Abilities:
     )
 
 
-#: 各能力选中真实 provider 后必须填的字段（字段名 = f"{ability}_{suffix}"）
-_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
-    "clothing_search": ("api_key",),
-    "material_search": ("api_key",),
-    "material_identifier": ("base_url", "api_key", "model"),
-    "design_generator": ("base_url", "api_key", "model"),
-}
-
+#: 各能力必填字段的后缀（字段名 = f"{ability}_{suffix}"）。
+#: 唯一来源是 `settings_spec.ABILITY_SPECS[].required`（按 provider 区分），
+#: 否则会把 comfyui 这类无需密钥的实现误判为「缺少配置」。
 _FIELD_LABEL = {
     "base_url": "端点 Base URL",
     "api_key": "API Key",
@@ -246,6 +262,26 @@ def _missing_label(ability: str) -> str:
     }.get(ability, ability)
 
 
+#: 能力名 → `Abilities` 上的属性名（目前同名，显式写出来便于以后改名）
+_ABILITY_ATTRS: dict[str, str] = {
+    "clothing_search": "clothing_search",
+    "material_search": "material_search",
+    "material_identifier": "material_identifier",
+    "design_generator": "design_generator",
+}
+
+
+def _provider_notes(abilities: Abilities, name: str) -> list[str]:
+    """provider 自报的配置问题（可选约定：`config_notes` 属性）。
+
+    用于那些「PUT 时无法校验」的配置（如粘贴的 ComfyUI 工作流 JSON），
+    让设置页能提前看到，而不是等第一次跑任务才 500。
+    """
+    instance = getattr(abilities, _ABILITY_ATTRS.get(name, name), None)
+    notes = getattr(instance, "config_notes", None)
+    return [str(note) for note in notes] if isinstance(notes, (list, tuple)) else []
+
+
 def config_warnings(abilities: Abilities, ability: AbilitySettings) -> list[str]:
     """启动时提示：真实 provider 缺少端点 / Key / 模型。避免跑到一半才发现配错。"""
     warnings: list[str] = []
@@ -254,11 +290,15 @@ def config_warnings(abilities: Abilities, ability: AbilitySettings) -> list[str]
         if not provider:
             warnings.append(f"{_missing_label(name)} 未选择实现，调用会失败")
             continue
-        for suffix in _REQUIRED_FIELDS.get(name, ()):
+        for suffix in required_fields(name, provider):
             if not getattr(ability, f"{name}_{suffix}", ""):
                 warnings.append(
                     f"{_missing_label(name)} 未配置 {_FIELD_LABEL[suffix]}，调用会失败"
                 )
+        warnings.extend(
+            f"{_missing_label(name)}：{note}"
+            for note in _provider_notes(abilities, name)
+        )
 
     return warnings
 

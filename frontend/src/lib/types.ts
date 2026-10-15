@@ -120,7 +120,14 @@ export interface SiteOption {
 // --------------------------------------------------------------------------- //
 // 能力配置（设置页）
 // --------------------------------------------------------------------------- //
-export type FieldType = "select" | "text" | "secret" | "int" | "float" | "bool";
+export type FieldType =
+  | "select"
+  | "text"
+  | "textarea"
+  | "secret"
+  | "int"
+  | "float"
+  | "bool";
 
 export interface FieldSpec {
   name: string;

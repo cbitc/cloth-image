@@ -117,6 +117,29 @@ class RetryingHttpClient:
             "POST", url, headers=headers, json_body=payload, timeout_s=timeout_s
         )
 
+    def post_multipart(
+        self,
+        url: str,
+        *,
+        files: dict[str, tuple[str, bytes, str]],
+        form: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+        timeout_s: float | None = None,
+    ) -> dict[str, Any]:
+        """上传文件（multipart/form-data），返回解析后的 JSON。
+
+        用于 ComfyUI 的 `POST /upload/image` 这类接口（`json` 与 `data` 互斥）。
+        `files` 形如 `{"image": ("ref.png", data, "image/png")}`。
+        """
+        return self._request_json(
+            "POST",
+            url,
+            headers=headers,
+            files=files,
+            form=form,
+            timeout_s=timeout_s,
+        )
+
     def get_json(
         self,
         url: str,
@@ -196,6 +219,8 @@ class RetryingHttpClient:
         *,
         headers: dict[str, str] | None = None,
         json_body: dict[str, Any] | None = None,
+        files: dict[str, tuple[str, bytes, str]] | None = None,
+        form: dict[str, str] | None = None,
         timeout_s: float | None = None,
     ) -> dict[str, Any]:
         effective_timeout = timeout_s or self._timeout_s
@@ -205,13 +230,18 @@ class RetryingHttpClient:
         while attempt <= self._max_retries:
             attempt += 1
             try:
-                response = self._client.request(
-                    method,
-                    url,
-                    headers=headers,
-                    json=json_body,
-                    timeout=effective_timeout,
-                )
+                request_kwargs: dict[str, Any] = {
+                    "headers": headers,
+                    "timeout": effective_timeout,
+                }
+                if files is not None:
+                    request_kwargs["files"] = files
+                    if form:
+                        request_kwargs["data"] = form
+                else:
+                    request_kwargs["json"] = json_body
+
+                response = self._client.request(method, url, **request_kwargs)
             except httpx.TimeoutException as exc:
                 last_exc = ProviderTimeoutError(
                     f"{self.provider} 请求超时（{effective_timeout}s）",

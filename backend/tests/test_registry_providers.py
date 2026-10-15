@@ -10,7 +10,10 @@ import pytest
 
 from app.ability_config import AbilitySettings
 from app.abilities.clothing_search import UnsplashClothingSearchProvider
-from app.abilities.design_generate import OpenAICompatibleImageGenerator
+from app.abilities.design_generate import (
+    ComfyUIImageGenerator,
+    OpenAICompatibleImageGenerator,
+)
 from app.abilities.material_identify import OpenAICompatibleVLMIdentifier
 from app.abilities.material_search import UnsplashMaterialSearchProvider
 from app.abilities.registry import (
@@ -20,6 +23,7 @@ from app.abilities.registry import (
     config_warnings,
 )
 from app.config import Settings
+from app.settings_spec import required_fields
 from fakes import (
     FakeClothingSearchProvider,
     FakeDesignGenerator,
@@ -62,6 +66,16 @@ def _generator(**overrides) -> AbilitySettings:
         "design_generator_base_url": "https://endpoint.test/v1",
         "design_generator_api_key": "test-key",
         "design_generator_model": "qwen-image-3.0",
+    }
+    base.update(overrides)
+    return AbilitySettings(**base)
+
+
+def _comfyui(**overrides) -> AbilitySettings:
+    base: dict = {
+        "design_generator_provider": "comfyui",
+        "design_generator_base_url": "http://192.168.0.102:8188",
+        "design_generator_comfyui_preset": "qwen_image_edit",
     }
     base.update(overrides)
     return AbilitySettings(**base)
@@ -161,6 +175,68 @@ def test_image_generator_receives_shared_settings() -> None:
     assert generator.model == "qwen-image-3.0-pro"
     assert generator.size == "768x1024"
     assert generator.base_url == "https://endpoint.test/v1"
+
+
+def test_design_generator_can_use_comfyui() -> None:
+    abilities = build_abilities(_comfyui(), _settings())
+
+    assert abilities.providers["design_generator"] == "comfyui"
+    assert isinstance(abilities.design_generator, ComfyUIImageGenerator)
+
+
+def test_comfyui_receives_config_and_shared_settings() -> None:
+    abilities = build_abilities(
+        _comfyui(
+            design_generator_model="custom-unet.safetensors",
+            design_generator_comfyui_lora="lora.safetensors",
+            design_generator_comfyui_steps=4,
+            design_generator_comfyui_cfg=1.0,
+        ),
+        _settings(image_size="768x1024", image_max_refs=2),
+    )
+
+    generator = abilities.design_generator
+    assert isinstance(generator, ComfyUIImageGenerator)
+    assert generator.base_url == "http://192.168.0.102:8188"
+    assert generator.model == "custom-unet.safetensors"
+    assert generator.lora == "lora.safetensors"
+    assert generator.steps == 4
+    assert generator.cfg == 1.0
+    assert (generator.width, generator.height) == (768, 1024)
+    assert generator.max_refs == 2
+
+
+def test_comfyui_does_not_require_api_key() -> None:
+    """自建 ComfyUI 无密钥：必填字段必须按 provider 区分，否则会一直误报「缺少配置」。"""
+    ability = _comfyui()
+
+    warnings = config_warnings(build_abilities(ability, _settings()), ability)
+
+    assert not any("生图" in warning for warning in warnings)
+    assert not any("API Key" in warning for warning in warnings)
+
+
+def test_comfyui_missing_base_url_emits_warning() -> None:
+    ability = _comfyui(design_generator_base_url="")
+
+    warnings = config_warnings(build_abilities(ability, _settings()), ability)
+
+    assert any("Base URL" in warning for warning in warnings)
+
+
+def test_comfyui_bad_custom_workflow_is_reported_as_warning() -> None:
+    """自定义工作流只在运行时能校验 → 必须提前出现在设置页警告里。"""
+    ability = _comfyui(design_generator_comfyui_preset="custom")
+
+    warnings = config_warnings(build_abilities(ability, _settings()), ability)
+
+    assert any("自定义工作流" in warning for warning in warnings)
+
+
+def test_required_fields_are_provider_aware() -> None:
+    assert required_fields("design_generator", "comfyui") == ("base_url",)
+    assert "api_key" in required_fields("design_generator", "openai_compatible_image")
+    assert required_fields("design_generator", "未注册的实现") == ()
 
 
 def test_unknown_provider_fails_fast_with_helpful_message() -> None:

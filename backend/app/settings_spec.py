@@ -23,6 +23,13 @@ from typing import Any
 #   material_search     : unsplash                 （Unsplash 面料特写检索）
 #   material_identifier : openai_compatible        （OpenAI 兼容 /chat/completions）
 #   design_generator    : openai_compatible_image  （OpenAI 兼容 /images/generations）
+#                       : comfyui                  （自建 ComfyUI /prompt + /view）
+#
+# `required` 声明「该 provider 选好后必须填哪些字段后缀」，是唯一来源：
+# registry.config_warnings 与 settings_view.ability_status 都由它推导，
+# 避免出现「所有 provider 都要求 api_key」这类误报（如 comfyui 无需密钥）。
+#
+# `fields[].providers` 声明该字段只对哪些 provider 显示（缺省 = 该能力全部实现）。
 ABILITY_SPECS: list[dict[str, Any]] = [
     {
         "ability": "clothing_search",
@@ -30,6 +37,7 @@ ABILITY_SPECS: list[dict[str, Any]] = [
         "signature": "[网站列表] → [服装图片列表]",
         "options": ["unsplash"],
         "hint": "Unsplash 图库检索（不按站点过滤）；demo 应用限 50 次/小时",
+        "required": {"unsplash": ("api_key",)},
         "fields": [
             {
                 "name": "clothing_search_api_key",
@@ -45,6 +53,7 @@ ABILITY_SPECS: list[dict[str, Any]] = [
         "signature": "服装图片 → [材质 tag 列表]",
         "options": ["openai_compatible"],
         "hint": "底层走 OpenAI 兼容协议（/chat/completions），可指向任意兼容端点",
+        "required": {"openai_compatible": ("base_url", "api_key", "model")},
         "fields": [
             {
                 "name": "material_identifier_base_url",
@@ -72,6 +81,7 @@ ABILITY_SPECS: list[dict[str, Any]] = [
         "signature": "[材质 tag 列表] → [材质图片列表]",
         "options": ["unsplash"],
         "hint": "Unsplash 面料特写检索（每个材质 tag 一次请求）；demo 限 50 次/小时",
+        "required": {"unsplash": ("api_key",)},
         "fields": [
             {
                 "name": "material_search_api_key",
@@ -85,26 +95,104 @@ ABILITY_SPECS: list[dict[str, Any]] = [
         "ability": "design_generator",
         "label": "图生图生成设计图",
         "signature": "([材质图片], 设计想法) → [设计图]",
-        "options": ["openai_compatible_image"],
-        "hint": "底层走 OpenAI 兼容协议（/images/generations），可指向任意兼容端点",
+        "options": ["openai_compatible_image", "comfyui"],
+        "hint": (
+            "openai_compatible_image 走 OpenAI 兼容协议（/images/generations）；"
+            "comfyui 直连自建 ComfyUI（POST /prompt + GET /view）"
+        ),
+        "required": {
+            "openai_compatible_image": ("base_url", "api_key", "model"),
+            # ComfyUI 自建服务无密钥；模型名有内置默认值（预设里按需覆盖）
+            "comfyui": ("base_url",),
+        },
         "fields": [
             {
                 "name": "design_generator_base_url",
                 "label": "端点 Base URL",
                 "type": "text",
+                "providers": ["openai_compatible_image", "comfyui"],
                 "placeholder": "https://<your-endpoint>/v1",
-                "help": "只写到此为止，不含 /images/generations。",
+                "help": (
+                    "OpenAI 兼容端点只写到此为止（不含 /images/generations）；"
+                    "ComfyUI 填形如 http://192.168.0.102:8188 的地址。"
+                ),
             },
             {
                 "name": "design_generator_api_key",
                 "label": "API Key",
                 "type": "secret",
+                "providers": ["openai_compatible_image"],
             },
             {
                 "name": "design_generator_model",
                 "label": "生图模型",
                 "type": "text",
-                "placeholder": "例如 qwen-image-3.0",
+                "providers": ["openai_compatible_image", "comfyui"],
+                "placeholder": "openai 例如 qwen-image-3.0；comfyui 填 UNET 文件名",
+                "help": (
+                    "ComfyUI 下这是主模型（UNETLoader）的文件名，例如 "
+                    "Qwen-Image-Edit-2509_fp8_e4m3fn.safetensors；留空用预设默认。"
+                ),
+            },
+            {
+                "name": "design_generator_comfyui_preset",
+                "label": "ComfyUI 工作流预设",
+                "type": "select",
+                "providers": ["comfyui"],
+                "choices": ["qwen_image_edit", "z_image_turbo", "custom"],
+                "help": (
+                    "qwen_image_edit = 参考图编辑（图生图，最多 3 张参考图）；"
+                    "z_image_turbo = 纯文生图（快，忽略参考图）；"
+                    "custom = 使用下方自定义工作流 JSON。"
+                ),
+            },
+            {
+                "name": "design_generator_comfyui_workflow",
+                "label": "自定义工作流 JSON",
+                "type": "textarea",
+                "providers": ["comfyui"],
+                "show_when": {"design_generator_comfyui_preset": ["custom"]},
+                "placeholder": "粘贴 ComfyUI「Save (API Format)」导出的 JSON",
+                "help": (
+                    "按结构化规则注入：提示词写进 KSampler 上游的文本节点、"
+                    "LoadImage 依序接收参考图、Empty*Latent 用生图尺寸、"
+                    "KSampler 用随机 seed/步数/CFG；输出节点需为 SaveImage 或 PreviewImage。"
+                ),
+            },
+            {
+                "name": "design_generator_comfyui_lora",
+                "label": "ComfyUI LoRA（可空）",
+                "type": "text",
+                "providers": ["comfyui"],
+                "placeholder": "例如 Qwen-Image-Edit-Lightning-4steps-V1.0-bf16.safetensors",
+                "help": (
+                    "内置预设 qwen_image_edit 会把它挂到主模型上（LoraLoaderModelOnly）；"
+                    "只对 qwen_image_edit 预设生效。"
+                ),
+            },
+            {
+                "name": "design_generator_comfyui_steps",
+                "label": "ComfyUI 采样步数",
+                "type": "int",
+                "min": 0,
+                "max": 100,
+                "providers": ["comfyui"],
+                "help": (
+                    "0 = 用预设默认（qwen_image_edit：有 Lightning LoRA 4 步、否则 20 步；"
+                    "z_image_turbo：8 步）。只对内置预设生效。"
+                ),
+            },
+            {
+                "name": "design_generator_comfyui_cfg",
+                "label": "ComfyUI CFG",
+                "type": "float",
+                "min": 0.0,
+                "max": 30.0,
+                "providers": ["comfyui"],
+                "help": (
+                    "0 = 用预设默认（qwen_image_edit：有 Lightning LoRA 1.0、否则 2.5；"
+                    "z_image_turbo：1.0）。只对内置预设生效。"
+                ),
             },
         ],
     },
@@ -135,14 +223,24 @@ def _provider_fields() -> list[dict[str, Any]]:
 
 
 def _provider_specific_fields() -> list[dict[str, Any]]:
-    """provider 专属字段：仅当该能力选中真实实现时显示（`show_when`）。"""
+    """provider 专属字段：仅当该能力选中**对应**实现时显示（`show_when`）。
+
+    字段可用 `providers` 限定只对哪些实现生效（缺省 = 该能力全部真实实现）；
+    字段自带的 `show_when` 会与 provider 条件**同时**命中才显示（前端按 AND 处理）。
+    """
     out: list[dict[str, Any]] = []
     for spec in ABILITY_SPECS:
-        real = _REAL_OPTIONS[spec["ability"]]
+        ability = spec["ability"]
+        real = _REAL_OPTIONS[ability]
         for field in spec["fields"]:
+            providers = list(field.get("providers") or real)
             merged = {"group": "能力配置", **field}
-            if real:
-                merged["show_when"] = {f"{spec['ability']}_provider": real}
+            merged.pop("providers", None)
+            conditions = dict(field.get("show_when") or {})
+            if real and providers:
+                conditions[f"{ability}_provider"] = providers
+            if conditions:
+                merged["show_when"] = conditions
             out.append(merged)
     return out
 
@@ -155,7 +253,28 @@ ABILITY_FIELD_NAMES: tuple[str, ...] = tuple(
     spec["name"] for spec in [*_PROVIDER_FIELDS, *_PROVIDER_SPECIFIC_FIELDS]
 )
 
-# type: select | text | secret | int | float | bool
+# --------------------------------------------------------------------------- #
+# 必填字段（按 能力 + provider）
+# --------------------------------------------------------------------------- #
+#: {能力: {provider: (字段后缀, ...)}}，由 ABILITY_SPECS 的 `required` 汇总而来。
+_REQUIRED_FIELDS: dict[str, dict[str, tuple[str, ...]]] = {
+    spec["ability"]: {
+        provider: tuple(suffixes)
+        for provider, suffixes in (spec.get("required") or {}).items()
+    }
+    for spec in ABILITY_SPECS
+}
+
+
+def required_fields(ability: str, provider: str) -> tuple[str, ...]:
+    """该能力在该 provider 下必须配置的字段后缀，如 ("base_url", "model")。
+
+    缺省为空（未声明 = 无需额外字段）。
+    """
+    return _REQUIRED_FIELDS.get(ability, {}).get(provider, ())
+
+
+# type: select | text | textarea | secret | int | float | bool
 FIELD_SPECS: list[dict[str, Any]] = [
     *_PROVIDER_FIELDS,
     *_PROVIDER_SPECIFIC_FIELDS,

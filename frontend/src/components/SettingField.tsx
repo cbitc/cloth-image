@@ -103,6 +103,15 @@ export function FieldEditor({
           }}
           className={inputClass}
         />
+      ) : spec.type === "textarea" ? (
+        <textarea
+          value={value === null || value === undefined ? "" : String(value)}
+          placeholder={spec.placeholder ?? ""}
+          rows={8}
+          spellCheck={false}
+          onChange={(event) => onChange(spec.name, event.target.value)}
+          className={`${inputClass} resize-y font-mono text-[11px] leading-relaxed`}
+        />
       ) : (
         <input
           value={value === null || value === undefined ? "" : String(value)}

@@ -26,6 +26,14 @@ def _ability(body: dict, name: str) -> dict:
     return next(item for item in body["ability_status"] if item["ability"] == name)
 
 
+def _field(body: dict, name: str) -> dict:
+    for group in body["groups"]:
+        for spec in group["fields"]:
+            if spec["name"] == name:
+                return spec
+    raise KeyError(name)
+
+
 # --------------------------------------------------------------------------- #
 # 读取
 # --------------------------------------------------------------------------- #
@@ -120,12 +128,61 @@ def test_ability_status_flags_missing_key(client) -> None:
     assert identifier["state"] == "missing_key"
     assert any("API Key" in warning for warning in body["warnings"])
 
+    # 补端点 + 模型，只差 Key 仍不可用（openai_compatible 三项都必需）
+    client.put(
+        "/api/settings",
+        json={
+            "values": {
+                "material_identifier_base_url": "https://endpoint.test/v1",
+                "material_identifier_model": "qwen3-vl-plus",
+            }
+        },
+    )
+    body = client.get("/api/settings").json()
+    assert _ability(body, "material_identifier")["state"] == "missing_key"
+
     # 补齐 Key 后恢复可用
     client.put(
         "/api/settings", json={"values": {"material_identifier_api_key": "sk-x"}}
     )
     body = client.get("/api/settings").json()
     assert _ability(body, "material_identifier")["state"] == "ready"
+
+
+def test_ability_status_ignores_api_key_for_comfyui(client) -> None:
+    """ComfyUI 无需密钥：只需 base_url 就算可用，且不应出现 API Key 警告。"""
+    client.put(
+        "/api/settings",
+        json={
+            "values": {
+                "design_generator_provider": "comfyui",
+                "design_generator_base_url": "http://comfy.test:8188",
+                "design_generator_comfyui_preset": "qwen_image_edit",
+                "design_generator_comfyui_workflow": "",
+                "design_generator_comfyui_lora": "",
+                "design_generator_comfyui_steps": 0,
+                "design_generator_comfyui_cfg": 0.0,
+                "design_generator_model": "",
+            }
+        },
+    )
+    body = client.get("/api/settings").json()
+
+    generator = _ability(body, "design_generator")
+    assert generator["provider"] == "comfyui"
+    assert generator["state"] == "ready"
+    assert not any("生图" in warning for warning in body["warnings"])
+
+    # 条件字段：comfyui 下不展示 API Key，但展示预设
+    assert _field(body, "design_generator_api_key")["show_when"] == {
+        "design_generator_provider": ["openai_compatible_image"]
+    }
+    assert _field(body, "design_generator_comfyui_preset")["type"] == "select"
+    assert _field(body, "design_generator_comfyui_workflow")["show_when"] == {
+        "design_generator_comfyui_preset": ["custom"],
+        "design_generator_provider": ["comfyui"],
+    }
+    assert _field(body, "design_generator_comfyui_workflow")["type"] == "textarea"
 
 
 # --------------------------------------------------------------------------- #

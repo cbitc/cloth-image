@@ -18,6 +18,7 @@ from app.settings_spec import (
     EDITABLE_FIELD_NAMES,
     FIELD_SPECS,
     SECRET_FIELD_NAMES,
+    required_fields,
 )
 
 STATE_LABEL = {
@@ -66,8 +67,13 @@ def ability_status(
         if not provider:
             state, state_label = "unconfigured", STATE_LABEL["unconfigured"]
         else:
-            has_key = bool(getattr(ability, f"{name}_api_key", ""))
-            state = "ready" if has_key else "missing_key"
+            # 必填字段按 provider 区分（comfyui 无需密钥；unsplash 只需密钥）
+            missing = [
+                suffix
+                for suffix in required_fields(name, provider)
+                if not getattr(ability, f"{name}_{suffix}", "")
+            ]
+            state = "ready" if not missing else "missing_key"
             state_label = STATE_LABEL[state]
 
         out.append(

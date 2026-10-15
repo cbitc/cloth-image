@@ -44,6 +44,14 @@ class AbilitySettings(BaseModel):
     design_generator_api_key: str = ""
     design_generator_model: str = ""
 
+    # 图生图 · ComfyUI（自建服务，无密钥；`preset=custom` 时用 workflow JSON）
+    design_generator_comfyui_preset: str = "qwen_image_edit"
+    design_generator_comfyui_workflow: str = ""
+    design_generator_comfyui_lora: str = ""
+    #: 0 = 使用预设默认（预设各自决定步数 / CFG）
+    design_generator_comfyui_steps: int = 0
+    design_generator_comfyui_cfg: float = 0.0
+
 
 #: 设置页写入的覆盖项（模块级，与 Settings 的覆盖项分离）
 _ABILITY_OVERRIDES: dict[str, Any] = {}
