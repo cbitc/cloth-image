@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     #: 小样最长边（越大越清晰，落盘与参考注入成本越高）
     identify_swatch_max_side: int = 768
     material_images_per_tag: int = 3
+    # 面料图检索：候选池按倍数多取，再按卡片色板做颜色重排（Unsplash 无相关性分数）
+    material_search_rerank_enabled: bool = True
+    material_search_oversample: int = 3
+    material_search_rerank_max: int = 12
     design_candidates: int = 3
     # 相同图片 + 相同模型时复用识别结果（省一次 VLM 调用，约 1500 tokens）
     identify_cache_enabled: bool = True

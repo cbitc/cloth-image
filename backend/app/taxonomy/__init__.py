@@ -31,6 +31,37 @@ DEFAULT_WEIGHT = "中等"
 DEFAULT_DRAPE = "适中"
 DEFAULT_CATEGORY = CATEGORY_OPTIONS[0]
 
+# --------------------------------------------------------------------------- #
+# 受控枚举 → 英文检索词
+# --------------------------------------------------------------------------- #
+# 识别输出是中文受控枚举（「格纹」「缎面」），图库检索却是英文有效；
+# 此前材质图检索里这类中文被 `isascii()` 直接丢掉，等于没用上识别结果。
+#: 图案 → 英文检索词（"纯色" 无信息量，调用方通常省略）
+PATTERN_EN: dict[str, str] = {
+    "纯色": "solid",
+    "条纹": "striped",
+    "格纹": "plaid",
+    "碎花": "floral",
+    "定位印花": "placement print",
+}
+#: 光泽 → 英文检索词
+GLOSS_EN: dict[str, str] = {
+    "哑光": "matte",
+    "微光": "subtle sheen",
+    "缎面": "satin",
+    "金属光": "metallic",
+}
+
+
+def pattern_en(value: str) -> str:
+    """图案受控值 → 英文检索词；非受控值返回空串。"""
+    return PATTERN_EN.get((value or "").strip(), "")
+
+
+def gloss_en(value: str) -> str:
+    """光泽受控值 → 英文检索词；非受控值返回空串。"""
+    return GLOSS_EN.get((value or "").strip(), "")
+
 
 def card_options() -> dict[str, list[str]]:
     """供前端渲染下拉框的受控取值。"""
@@ -137,6 +168,10 @@ __all__ = [
     "card_options",
     "build_material_query",
     "build_material_query_zh",
+    "PATTERN_EN",
+    "GLOSS_EN",
+    "pattern_en",
+    "gloss_en",
     "PATTERN_TYPES",
     "GLOSS_LEVELS",
     "TRANSPARENCY_LEVELS",

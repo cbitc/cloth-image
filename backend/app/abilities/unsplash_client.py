@@ -32,6 +32,8 @@ class UnsplashPhoto:
 
     #: `urls.regular`（官方要求直接使用该地址，即热链）
     image_url: str
+    #: `urls.small` 等小图地址：只用于本地颜色分析，不对外展示（能省带宽）
+    thumb_url: str = ""
     #: `links.html`，原始照片页，用于署名跳转
     page_url: str = ""
     author: str = ""
@@ -66,6 +68,7 @@ def parse_photo(item: dict[str, Any]) -> UnsplashPhoto | None:
     user = item.get("user") or {}
     return UnsplashPhoto(
         image_url=image_url,
+        thumb_url=(urls.get("small") or urls.get("thumb") or urls.get("regular") or ""),
         page_url=links.get("html") or "",
         author=(user.get("name") or user.get("username") or "").strip(),
         description=(
@@ -99,6 +102,10 @@ class UnsplashClient:
                 f"未配置 Unsplash Access Key（设置页 → {ability_label}）",
                 provider="unsplash",
             )
+
+    def download(self, url: str, *, max_bytes: int | None = None) -> tuple[bytes, str]:
+        """下载图片字节（用于颜色分析等本地处理，不对外展示）。"""
+        return self._http.get_bytes(url, max_bytes=max_bytes)
 
     def search(self, query: str, count: int) -> list[UnsplashPhoto]:
         """按关键词搜图并截断到 `count`（必要时翻页）。"""

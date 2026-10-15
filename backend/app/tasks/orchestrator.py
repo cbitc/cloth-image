@@ -317,6 +317,10 @@ def material_queries(card: MaterialCardResult | None) -> list[MaterialQuery]:
                 pattern=region.pattern.type,
                 gloss=region.optical.gloss,
                 rank=rank,
+                # 颜色用 hex（可靠的事实）而非自由文本色名：既用于生成英文检索词，
+                # 也作候选面料图颜色重排的目标色
+                color_hex=region.color.dominant_hex,
+                palette=[dict(entry) for entry in region.color.palette],
             )
         )
     return queries

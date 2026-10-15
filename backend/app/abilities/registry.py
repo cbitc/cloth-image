@@ -87,6 +87,9 @@ def _make_unsplash_material(ability: AbilitySettings, settings: Settings) -> Any
         access_key=ability.material_search_api_key,
         timeout_s=settings.provider_timeout_s,
         max_retries=settings.provider_max_retries,
+        rerank_enabled=settings.material_search_rerank_enabled,
+        oversample=settings.material_search_oversample,
+        rerank_max=settings.material_search_rerank_max,
     )
 
 

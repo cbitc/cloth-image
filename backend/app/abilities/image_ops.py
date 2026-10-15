@@ -23,7 +23,8 @@ DEFAULT_SWATCH_MAX_SIDE = 768
 DEFAULT_SWATCH_FALLBACK_FRACTION = 0.6
 
 
-def _to_rgb(img: Image.Image) -> Image.Image:
+def to_rgb(img: Image.Image) -> Image.Image:
+    """统一转成 RGB（RGBA / 调色板图贴白底，避免透明变黑）。"""
     if img.mode in ("RGB", "L"):
         return img.convert("RGB")
     # PNG 的 RGBA / P 调色板：贴到白底上，避免透明变黑
@@ -31,6 +32,10 @@ def _to_rgb(img: Image.Image) -> Image.Image:
     rgba = img.convert("RGBA")
     background.paste(rgba, mask=rgba.split()[-1])
     return background
+
+
+#: 兼容模块内既有调用（历史名称）
+_to_rgb = to_rgb
 
 
 def make_thumbnail(image_bytes: bytes, max_size: int = DEFAULT_THUMBNAIL_SIDE) -> bytes:

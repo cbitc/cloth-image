@@ -50,6 +50,10 @@ class MaterialQuery:
     pattern: str = ""
     gloss: str = ""
     rank: int = 0
+    #: 主导色 hex（`#RRGGBB`）：既用于把颜色变成英文检索词，也作重排的兜底目标色
+    color_hex: str = ""
+    #: 卡片色板 `[{"hex": "#RRGGBB", "ratio": 0.72}, ...]`：候选图颜色重排的目标色
+    palette: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
