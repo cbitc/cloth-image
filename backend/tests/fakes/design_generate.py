@@ -52,6 +52,7 @@ class FakeDesignGenerator:
                         hashlib.sha256(seed_str.encode("utf-8")).hexdigest()[:8], 16
                     ),
                     rank=i,
+                    used_reference=reference is not None,
                 )
             )
         return results

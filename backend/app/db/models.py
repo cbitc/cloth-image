@@ -75,6 +75,9 @@ class Task(Base):
     design_idea: Mapped[str] = mapped_column(Text, default="")
     auto_generate: Mapped[bool] = mapped_column(Boolean, default=False)
     require_material_selection: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: 生成设计图时是否把原服装图作为参考图（True = 图生图保留版型；
+    #: False = 只送材质图，退化为「材质图 + 文字描述版型」）
+    use_reference: Mapped[bool] = mapped_column(Boolean, default=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
@@ -148,6 +151,9 @@ class DesignImage(Base):
     model: Mapped[str] = mapped_column(String(64), default="")
     seed: Mapped[int] = mapped_column(Integer, default=0)
     rank: Mapped[int] = mapped_column(Integer, default=0)
+    #: 该候选是否**真的**把原服装图送进了模型（由 provider 依据实际参考图回报，
+    #: 不是任务开关的复制：外链无字节、超参考图上限时会被丢弃）
+    used_reference: Mapped[bool] = mapped_column(Boolean, default=False)
 
     task: Mapped[Task] = relationship(back_populates="design_images")
 

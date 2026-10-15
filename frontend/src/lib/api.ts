@@ -78,10 +78,19 @@ export const api = {
       body: JSON.stringify({ material_image_ids: materialImageIds }),
     }),
 
-  generate: (id: string, designIdea: string, numCandidates: number) =>
+  generate: (
+    id: string,
+    designIdea: string,
+    numCandidates: number,
+    useReference: boolean,
+  ) =>
     request<TaskDetail>(`/api/tasks/${id}/generate`, {
       method: "POST",
-      body: JSON.stringify({ design_idea: designIdea, num_candidates: numCandidates }),
+      body: JSON.stringify({
+        design_idea: designIdea,
+        num_candidates: numCandidates,
+        use_reference: useReference,
+      }),
     }),
 
   retry: (id: string) =>

@@ -52,6 +52,8 @@ export interface DesignImage {
   model: string;
   seed: number;
   rank: number;
+  /** 该候选是否真的把原服装图作为参考图送进了模型 */
+  used_reference: boolean;
 }
 
 export interface TaskEvent {
@@ -70,6 +72,8 @@ export interface TaskSummary {
   design_idea: string;
   auto_generate: boolean;
   require_material_selection: boolean;
+  /** 生成设计图时是否参考原服装图 */
+  use_reference: boolean;
   clothing_image: ClothingImage;
   tag_count: number;
   material_image_count: number;

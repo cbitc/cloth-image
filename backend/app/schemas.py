@@ -59,6 +59,8 @@ class DesignImageOut(BaseModel):
     model: str
     seed: int
     rank: int
+    #: 该候选是否真的把原服装图作为参考图送进了模型
+    used_reference: bool = False
 
 
 class TaskEventOut(BaseModel):
@@ -79,6 +81,8 @@ class TaskSummary(BaseModel):
     design_idea: str = ""
     auto_generate: bool = False
     require_material_selection: bool = False
+    #: 生成设计图时是否参考原服装图（True = 保留版型）
+    use_reference: bool = True
     clothing_image: ClothingImageOut
     tag_count: int = 0
     material_image_count: int = 0
@@ -152,6 +156,8 @@ class SelectMaterialsRequest(BaseModel):
 class GenerateRequest(BaseModel):
     design_idea: str = ""
     num_candidates: int = Field(default=3, ge=1, le=6)
+    #: 是否把原服装图作为参考图；None = 保持任务上的已有设置（部分更新语义）
+    use_reference: bool | None = None
 
 
 class MaterialTagDef(BaseModel):

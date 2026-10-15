@@ -143,6 +143,38 @@ def test_single_reference_is_sent_as_string_not_list() -> None:
     assert isinstance(calls[0]["image"], str)
 
 
+def test_material_only_mode_numbers_refs_from_one() -> None:
+    """reference=None（用户选择不参考原图）→ prompt 不再声称「参考图1 = 原服装图」。"""
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return _ok_response()
+
+    results = _generator(handler).generate(
+        [MaterialImageResult(tag="棉", image_bytes=_png())], "x", num_candidates=1
+    )
+
+    assert results[0].used_reference is False
+    prompt = calls[0]["prompt"]
+    assert "原服装图" not in prompt
+    assert "参考图1 = 识别出的材质图。" in prompt
+
+
+def test_used_reference_flag_tracks_the_original_image() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _ok_response()
+
+    results = _generator(handler).generate(
+        [MaterialImageResult(tag="棉", image_bytes=_png())],
+        "x",
+        ReferenceImage(image_bytes=_png()),
+        num_candidates=1,
+    )
+
+    assert results[0].used_reference is True
+
+
 def test_localhost_reference_is_skipped() -> None:
     """本机 URL 外部服务访问不到，不能传出去。"""
     calls: list[dict] = []

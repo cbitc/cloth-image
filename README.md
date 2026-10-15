@@ -74,7 +74,7 @@ stateDiagram-v2
   MATERIAL_SEARCH --> AWAIT_MATERIAL_SELECT : require_material_selection=true
   MATERIAL_SEARCH --> AWAIT_DESIGN_IDEA : 否则
   AWAIT_MATERIAL_SELECT --> AWAIT_DESIGN_IDEA : 确认挑选 ★
-  AWAIT_DESIGN_IDEA --> GENERATING : 填设计想法 ★
+  AWAIT_DESIGN_IDEA --> GENERATING : 填设计想法 + 是否参考原图 ★
   GENERATING --> DONE
   DONE --> GENERATING : 换一版
   PENDING --> FAILED
@@ -243,7 +243,7 @@ npm run dev          # 默认连 http://localhost:8000
 | GET | `/api/tasks/{id}` | 任务详情 |
 | POST | `/api/tasks/{id}/confirm-materials` | ★检查点1：确认/修改材质 tag → 触发材质检索 |
 | POST | `/api/tasks/{id}/select-materials` | ★检查点2：挑选材质图 |
-| POST | `/api/tasks/{id}/generate` | ★检查点3：填设计想法 → 生成设计图 |
+| POST | `/api/tasks/{id}/generate` | ★检查点3：填设计想法（`design_idea` / `num_candidates` / `use_reference`）→ 生成设计图 |
 | POST | `/api/tasks/{id}/retry` | 失败重试 |
 | DELETE | `/api/tasks/{id}` | 删除任务 |
 | POST | `/api/tasks/bulk-delete` | 批量删除任务（body：`{"task_ids": [...]}`，返回 `{deleted, not_found}`） |
@@ -256,7 +256,32 @@ npm run dev          # 默认连 http://localhost:8000
 | PUT | `/api/settings` | 部分更新配置（`{"values": {...}}`；值为 `null` 表示删除覆盖） |
 | DELETE | `/api/settings` | 清空全部覆盖，回退到环境变量 / 默认值 |
 
-### 7.1 识别结果缓存
+### 7.1 生成设计图时是否参考原服装图
+
+`POST /api/tasks/{id}/generate` 的 `use_reference`（默认 `true`）决定**要不要把原服装图
+作为参考图 1 交给生图模型**：
+
+- `true`（默认，旧行为）：原图作为「参考图1」参与图生图，保留版型轮廓；材质图顺延为参考图 2~N
+- `false`：原图**完全不参与**，只送材质图（材质图改为从参考图 1 编号），
+  版型只能靠设计想法里的文字描述 —— 适合「只要材质感觉、不要原版型」的场景
+
+细节：
+
+- 任务上会持久化该开关（`task.use_reference`），**不传则保持任务上的已有值**
+  （与 `design_idea` 同样的部分更新语义）；前端在任务详情页生成面板提供勾选框
+- 每张设计图都记录 `used_reference`（`design_image.used_reference`），
+  由 provider 依据**实际送出的参考图**回报 —— 外链无字节、超出参考图上限、
+  或预设本身不吃参考图（如 ComfyUI `z_image_turbo`）时为 `false`，
+  前端结果卡片据此打「参考原图 / 纯材质生成」
+- 任务事件会写明「本次不参考原服装图…」；若最终一张参考图都没有（关掉原图且材质图无本地字节），
+  会再提示「退化为纯文生图」（`qwen_image_edit` 这类编辑模型退化成文生图时效果会明显下降）
+
+```json
+POST /api/tasks/{id}/generate
+{ "design_idea": "改成收腰版型", "num_candidates": 2, "use_reference": false }
+```
+
+### 7.2 识别结果缓存
 
 同一张图 + 同一个模型 → 直接复用上次的识别结果，跳过 VLM 调用。
 实测单次识别约 **1500 tokens**，而「同一张图建多个任务」是常见操作，收益直接。

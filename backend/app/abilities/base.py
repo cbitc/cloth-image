@@ -67,6 +67,9 @@ class DesignImageResult:
     model: str = ""
     seed: int = 0
     rank: int = 0
+    #: 该候选是否**真的**把原服装图送进了模型（由 provider 依据实际送出的参考图填写，
+    #: 而不是照抄任务开关：无字节/超参考图上限时原图会被丢弃）
+    used_reference: bool = False
 
 
 @dataclass(slots=True)

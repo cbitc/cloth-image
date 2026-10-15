@@ -268,6 +268,7 @@ class ComfyUIImageGenerator:
                     model=self.model,
                     seed=seed,
                     rank=index,
+                    used_reference=has_reference,
                 )
             )
         return results

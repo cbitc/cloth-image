@@ -225,6 +225,9 @@ def generate(
         task.design_idea = idea
     elif not (task.design_idea or "").strip():
         raise HTTPException(status_code=400, detail="请填写设计想法")
+    # 与 design_idea 同样的部分更新语义：None = 保持任务上的已有值
+    if payload.use_reference is not None:
+        task.use_reference = payload.use_reference
     db.commit()
 
     _advance(db, task, TaskStatus.GENERATING)

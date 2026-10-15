@@ -175,6 +175,7 @@ class OpenAICompatibleImageGenerator:
                 model=self.model,
                 seed=0,
                 rank=index,
+                used_reference=has_reference,
             )
             for index, url in enumerate(urls)
         ]

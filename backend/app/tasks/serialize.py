@@ -22,6 +22,7 @@ def build_summary(task: Task) -> TaskSummary:
         design_idea=task.design_idea or "",
         auto_generate=task.auto_generate,
         require_material_selection=task.require_material_selection,
+        use_reference=task.use_reference,
         clothing_image=ClothingImageOut.model_validate(task.clothing_image),
         tag_count=len(task.material_tags),
         material_image_count=len(task.material_images),
@@ -36,15 +37,11 @@ def build_detail(task: Task, *, include_events: bool = True) -> TaskDetail:
     summary = build_summary(task)
     return TaskDetail(
         **summary.model_dump(),
-        material_tags=[
-            MaterialTagOut.model_validate(t) for t in task.material_tags
-        ],
+        material_tags=[MaterialTagOut.model_validate(t) for t in task.material_tags],
         material_images=[
             MaterialImageOut.model_validate(m) for m in task.material_images
         ],
-        design_images=[
-            DesignImageOut.model_validate(d) for d in task.design_images
-        ],
+        design_images=[DesignImageOut.model_validate(d) for d in task.design_images],
         events=(
             [
                 TaskEventOut.model_validate(e)

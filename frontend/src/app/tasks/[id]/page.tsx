@@ -25,6 +25,7 @@ export default function TaskDetailPage() {
   const [selectedMaterials, setSelectedMaterials] = useState<Set<string>>(new Set());
   const [designIdea, setDesignIdea] = useState("");
   const [numCandidates, setNumCandidates] = useState(3);
+  const [useReference, setUseReference] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -32,6 +33,7 @@ export default function TaskDetailPage() {
   const tagSignature = useRef("");
   const materialSignature = useRef("");
   const ideaSignature = useRef("");
+  const useRefSignature = useRef<boolean | null>(null);
 
   useEffect(() => {
     api.taxonomy().then(setTaxonomy).catch(() => undefined);
@@ -87,6 +89,15 @@ export default function TaskDetailPage() {
     if (task.design_idea && task.design_idea !== ideaSignature.current) {
       ideaSignature.current = task.design_idea;
       setDesignIdea(task.design_idea);
+    }
+  }, [task]);
+
+  // 开关以服务端为准；用户手动切换后（尚未生成，服务端值未变）不会被覆盖
+  useEffect(() => {
+    if (!task) return;
+    if (task.use_reference !== useRefSignature.current) {
+      useRefSignature.current = task.use_reference;
+      setUseReference(task.use_reference);
     }
   }, [task]);
 
@@ -214,10 +225,27 @@ export default function TaskDetailPage() {
                 className="h-1 flex-1 accent-sky-400"
               />
             </div>
+            <label className="mt-3 flex items-start gap-2 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                checked={useReference}
+                onChange={(event) => setUseReference(event.target.checked)}
+                className="mt-0.5 accent-sky-400"
+              />
+              <span>
+                参考原服装图（保留版型）
+                <span className="mt-0.5 block text-[10px] leading-relaxed text-slate-500">
+                  取消勾选则不把原图送进模型，仅按材质图与文字描述生成；
+                  部分生图实现本身不使用参考图，此时该开关不生效。
+                </span>
+              </span>
+            </label>
             <Button
               className="mt-3 w-full"
               disabled={busy || !canGenerate}
-              onClick={() => run(() => api.generate(task.id, designIdea, numCandidates))}
+              onClick={() =>
+                run(() => api.generate(task.id, designIdea, numCandidates, useReference))
+              }
             >
               {busy ? <Spinner /> : null}
               {task.status === "DONE" ? "再生成一版" : "生成设计图"}

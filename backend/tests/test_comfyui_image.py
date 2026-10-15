@@ -375,6 +375,41 @@ def test_prompt_reference_numbering_matches_actual_refs() -> None:
     assert "23" not in graph
 
 
+def test_material_only_mode_numbers_refs_from_one() -> None:
+    """用户选择「不参考原图」→ 只传材质图，且编号从参考图1 开始。"""
+    handler, state = _server()
+    generator = _generator(handler, max_refs=3)
+
+    materials = [
+        _material(f"材质{i}", 0.9 - i * 0.01, (i * 20 + 10, 40, 60)) for i in range(2)
+    ]
+    results = generator.generate(materials, _DESIGN_IDEA, None, num_candidates=1)
+
+    graph = state["graphs"][0]["prompt"]
+    prompt = graph["10"]["inputs"]["prompt"]
+    assert "原服装图" not in prompt
+    assert "参考图1~2 = 识别出的材质图。" in prompt
+    # 只上传两张材质图（没有原图占位）
+    assert len(state["uploads"]) == 2
+    assert graph["10"]["inputs"]["image1"] == ["20", 0]
+    assert graph["10"]["inputs"]["image2"] == ["21", 0]
+    assert results[0].used_reference is False
+
+
+def test_used_reference_flag_tracks_the_original_image() -> None:
+    handler, _state = _server()
+    generator = _generator(handler)
+
+    results = generator.generate(
+        [_material("棉")],
+        _DESIGN_IDEA,
+        ReferenceImage(image_bytes=_png()),
+        num_candidates=1,
+    )
+
+    assert results[0].used_reference is True
+
+
 def test_prompt_does_not_claim_material_ref_without_bytes() -> None:
     """材质图无字节被丢弃时，prompt 不能声称有「参考图2」，但材质名仍作为文字要求保留。"""
     handler, state = _server()

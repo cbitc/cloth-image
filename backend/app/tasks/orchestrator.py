@@ -440,12 +440,32 @@ def run_generate(
             ]
 
             clothing = task.clothing_image
-            ref_bytes, _ = _load_source_image(db, task, clothing)
-            reference = ReferenceImage(
-                image_bytes=ref_bytes,
-                external_url=clothing.image_url,
-                caption=clothing.title,
-            )
+            reference: ReferenceImage | None
+            if task.use_reference:
+                ref_bytes, _ = _load_source_image(db, task, clothing)
+                reference = ReferenceImage(
+                    image_bytes=ref_bytes,
+                    external_url=clothing.image_url,
+                    caption=clothing.title,
+                )
+            else:
+                # 用户明确选择不参考原图：连下载都省掉，退化为「材质图 + 文字描述版型」
+                reference = None
+                _emit(
+                    db,
+                    task,
+                    "generate",
+                    "本次不参考原服装图：仅按材质图与设计想法生成",
+                )
+
+            if reference is None and not any(m.image_bytes for m in material_images):
+                # 既没有原图也没有可用的材质图字节 → 实际会退化成纯文生图，提前告知
+                _emit(
+                    db,
+                    task,
+                    "generate",
+                    "没有任何可用参考图（未参考原图，材质图也无本地字节），本次退化为纯文生图",
+                )
 
             results = abilities.design_generator.generate(
                 material_images,
@@ -483,6 +503,7 @@ def run_generate(
                         model=result.model,
                         seed=result.seed,
                         rank=result.rank,
+                        used_reference=result.used_reference,
                     )
                 )
 
