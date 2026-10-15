@@ -223,19 +223,34 @@ class ComfyUIImageGenerator:
             raise ProviderError(self._config_error, provider=self._provider)
 
         self.last_skipped_refs = []
+
+        # 先挑出**实际**参与生图的参考图，再据此组装 prompt：
+        # 候选材质图可达十几个，但参考图上限只有 max_refs 张，
+        # 按候选数写 prompt 会声称存在并不存在的「参考图N」。
+        if self.uses_references:
+            payloads, material_tags = self._select_reference_payloads(
+                material_images, reference
+            )
+            has_reference = any(label == "原服装图" for _, label in payloads)
+            material_ref_count = len(payloads) - (1 if has_reference else 0)
+            if not material_tags:  # 材质图一张都没用上 → 退回纯文字要求
+                material_tags = [m.tag for m in material_images]
+        else:
+            # 文生图预设（z_image_turbo）不吃参考图：材质只能作为文字提示
+            payloads = []
+            material_tags = [m.tag for m in material_images]
+            has_reference = False
+            material_ref_count = 0
+
         prompt = build_design_prompt(
-            material_tags=[m.tag for m in material_images],
-            material_images_count=len(material_images),
+            material_tags=material_tags,
+            material_images_count=material_ref_count,
             design_idea=design_idea,
-            has_reference=reference is not None,
+            has_reference=has_reference,
         )
 
         # 参考图对所有候选相同 → 只上传一次（按内容哈希去重）
-        names = (
-            self._upload_references(material_images, reference)
-            if self.uses_references
-            else []
-        )
+        names = [self._upload(data, label) for data, label in payloads]
 
         results: list[DesignImageResult] = []
         for index in range(max(1, num_candidates)):
@@ -355,21 +370,27 @@ class ComfyUIImageGenerator:
             best_per_tag.values(), key=lambda item: item.similarity, reverse=True
         )
 
-    def _upload_references(
+    def _select_reference_payloads(
         self,
         material_images: list[MaterialImageResult],
         reference: ReferenceImage | None,
-    ) -> list[str]:
-        """按「原服装图优先 + 各材质最优图」挑选并上传，返回 ComfyUI 侧文件名。
+    ) -> tuple[list[tuple[bytes, str]], list[str]]:
+        """挑出**实际可用**的参考图，返回 (待上传项, 入选的材质 tag)。
+
+        与「上传」分离，是为了在组装 prompt 时就知道真实的参考图张数/材质 ——
+        否则 prompt 会声称存在并不存在的「参考图N」（候选数远大于实际上限）。
 
         任何被丢弃的参考图（无字节 / 超出上限）都记进 `last_skipped_refs`，
         由编排器转成任务事件 —— 否则用户只看到「成功」，材质参考其实没生效。
         """
         payloads: list[tuple[bytes, str]] = []
+        material_tags: list[str] = []
+        has_garment = False
 
         if reference is not None:
             if reference.image_bytes:
                 payloads.append((reference.image_bytes, "原服装图"))
+                has_garment = True
             else:
                 logger.warning("原服装图没有字节，ComfyUI 取不到本机地址，已跳过")
                 self.last_skipped_refs.append(
@@ -379,6 +400,7 @@ class ComfyUIImageGenerator:
         for image in self._pick_material_refs(material_images):
             if image.image_bytes:
                 payloads.append((image.image_bytes, f"材质图({image.tag})"))
+                material_tags.append(image.tag)
             else:
                 logger.warning("材质图 %s 没有字节，已跳过", image.tag)
                 self.last_skipped_refs.append(
@@ -396,8 +418,10 @@ class ComfyUIImageGenerator:
                 for _, label in payloads[self.max_refs :]
             )
             payloads = payloads[: self.max_refs]
+            # 被截断的材质图不能再出现在 prompt 里
+            material_tags = material_tags[: len(payloads) - (1 if has_garment else 0)]
 
-        return [self._upload(data, label) for data, label in payloads]
+        return payloads, material_tags
 
     def _upload(self, data: bytes, label: str) -> str:
         digest = hashlib.sha256(data).hexdigest()[:16]

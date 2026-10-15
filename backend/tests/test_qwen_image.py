@@ -228,6 +228,27 @@ def test_truncated_refs_are_reported() -> None:
     assert len(generator.last_skipped_refs) == 4  # 7 张候选 - 上限 3
 
 
+def test_prompt_reference_numbering_matches_actual_refs() -> None:
+    """prompt 声称的参考图数量必须等于实际送出的 image 数组长度。"""
+    calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(json.loads(request.content))
+        return _ok_response()
+
+    materials = [
+        MaterialImageResult(tag=f"材质{i}", image_bytes=_png()) for i in range(6)
+    ]
+    _generator(handler, max_refs=3).generate(
+        materials, "x", ReferenceImage(image_bytes=_png()), num_candidates=1
+    )
+
+    assert len(calls[0]["image"]) == 3  # 原服装图 + 2 张材质图
+    assert "参考图2~3 = 识别出的材质图。" in calls[0]["prompt"]
+    assert "材质0、材质1" in calls[0]["prompt"]
+    assert "材质2" not in calls[0]["prompt"]
+
+
 def test_invalid_size_format_rejected_at_construction() -> None:
     with pytest.raises(ValueError, match="1024x1024"):
         _generator(lambda request: _ok_response(), size="1024*1024")

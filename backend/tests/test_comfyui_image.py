@@ -345,6 +345,68 @@ def test_turbo_preset_ignores_refs_without_reporting_skips() -> None:
     assert generator.last_skipped_refs == []
 
 
+def test_prompt_reference_numbering_matches_actual_refs() -> None:
+    """prompt 里声称的参考图必须与实际传入的一致。
+
+    候选 6 张材质图，但 max_refs=3（原服装图 + 2 张材质图）→
+    只能说「参考图2~3」，且被截断的材质名不能出现在 prompt 的材质清单里。
+    """
+    handler, state = _server()
+    generator = _generator(handler, max_refs=3)
+
+    materials = [
+        _material(f"材质{i}", 0.9 - i * 0.01, (i * 20 + 10, 40, 60)) for i in range(6)
+    ]
+    generator.generate(
+        materials, _DESIGN_IDEA, ReferenceImage(image_bytes=_png()), num_candidates=1
+    )
+
+    graph = state["graphs"][0]["prompt"]
+    prompt = graph["10"]["inputs"]["prompt"]
+
+    assert "参考图2~3 = 识别出的材质图。" in prompt
+    assert "参考图2~7" not in prompt
+    # 材质清单只含真正入选的两张
+    assert "材质0、材质1" in prompt
+    assert "材质2" not in prompt
+
+    # 图里也只有原服装图 + 2 张材质图（node 20/21/22）
+    assert graph["22"]["class_type"] == "LoadImage"
+    assert "23" not in graph
+
+
+def test_prompt_does_not_claim_material_ref_without_bytes() -> None:
+    """材质图无字节被丢弃时，prompt 不能声称有「参考图2」，但材质名仍作为文字要求保留。"""
+    handler, state = _server()
+    generator = _generator(handler)
+
+    generator.generate(
+        [
+            MaterialImageResult(
+                tag="桑蚕丝", external_url="https://cdn.example.com/a.jpg"
+            )
+        ],
+        _DESIGN_IDEA,
+        ReferenceImage(image_bytes=_png()),
+        num_candidates=1,
+    )
+
+    prompt = state["graphs"][0]["prompt"]["10"]["inputs"]["prompt"]
+    assert "参考图2" not in prompt
+    assert "面料使用「桑蚕丝」材质。" in prompt
+
+
+def test_prompt_without_any_reference_has_no_reference_legend() -> None:
+    handler, state = _server()
+    generator = _generator(handler)
+
+    generator.generate([], _DESIGN_IDEA, num_candidates=1)
+
+    prompt = state["graphs"][0]["prompt"]["10"]["inputs"]["prompt"]
+    assert "参考图" not in prompt
+    assert "面料使用「未指定」材质。" in prompt
+
+
 def test_without_any_reference_falls_back_to_empty_latent() -> None:
     handler, state = _server(
         outputs={
