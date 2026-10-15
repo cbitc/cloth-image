@@ -170,6 +170,32 @@ def _load_source_image(
     return None, "image/png"
 
 
+def _load_reference_bytes(
+    db: Session, task: Task, storage_key: str, image_url: str, label: str
+) -> bytes | None:
+    """取参考图字节：自有存储 → 外链按需下载（仅内存，不落盘）。
+
+    外链型 provider（如 Unsplash）只给 URL 不给字节，落库时 `storage_key` 为空；
+    而 ComfyUI 这类「只吃上传字节」的生图实现取不到外链，会直接丢掉参考图。
+    这里在生图前按需下载补齐，展示仍走外链（Unsplash 要求热链，故不回写 storage_key）。
+
+    下载失败不阻断生图：降级为只把 URL 交给 provider（OpenAI 兼容端点可直接用 URL）；
+    真正被丢弃的参考图由 provider 记进 `last_skipped_refs`，再由编排器转成任务事件。
+    """
+    if storage_key:
+        data = get_storage().get_bytes(storage_key)
+        if data:
+            return data
+
+    if image_url.startswith(("http://", "https://")):
+        try:
+            data, _ = fetch_image_bytes(image_url)
+            return data
+        except Exception as exc:  # noqa: BLE001 - 下载失败不应阻断生图
+            logger.warning("%s 外链下载失败，将只传 URL：%s", label, exc)
+    return None
+
+
 def _persist_generated_image(db: Session, task: Task, result) -> PersistedImage:
     """生成图落盘。
 
@@ -395,16 +421,17 @@ def run_generate(
             db.commit()
 
             abilities = get_abilities()
-            storage = get_storage()
             selected = [m for m in task.material_images if m.selected]
             material_images = [
                 MaterialImageResult(
                     tag=m.tag,
                     similarity=m.similarity,
                     content_type="image/png",
-                    # 带上字节：外部生图服务访问不到我们的 localhost /media 地址
-                    image_bytes=(
-                        storage.get_bytes(m.storage_key) if m.storage_key else None
+                    # 带上字节：外部生图服务访问不到我们的 localhost /media 地址；
+                    # 外链型 provider（如 Unsplash）没有本地字节 → 按需下载补齐，
+                    # 否则只吃字节的生图实现（ComfyUI）会把这些参考图丢掉。
+                    image_bytes=_load_reference_bytes(
+                        db, task, m.storage_key, m.image_url, f"材质图({m.tag})"
                     ),
                     external_url=m.image_url,
                     rank=m.rank,
@@ -426,6 +453,18 @@ def run_generate(
                 reference,
                 num_candidates,
             )
+
+            # provider 自报被丢弃的参考图（无字节 / 超上限 / 本机地址）→ 让用户看得见
+            skipped = list(
+                getattr(abilities.design_generator, "last_skipped_refs", None) or []
+            )
+            if skipped:
+                _emit(
+                    db,
+                    task,
+                    "generate",
+                    "部分参考图未生效：" + "；".join(skipped),
+                )
 
             for old in list(task.design_images):
                 db.delete(old)

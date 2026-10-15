@@ -178,6 +178,8 @@ class ComfyUIImageGenerator:
         self._uploads: dict[str, str] = {}
         #: ComfyUI 不返回 token 用量；编排器读不到就不打成本后缀
         self.last_usage: dict[str, Any] | None = None
+        #: 本次 generate 里被丢弃的参考图（无字节/超上限）→ 编排器转成任务事件
+        self.last_skipped_refs: list[str] = []
 
         self._http = http_client or RetryingHttpClient(
             provider=self._provider,
@@ -220,6 +222,7 @@ class ComfyUIImageGenerator:
         if self._config_error:
             raise ProviderError(self._config_error, provider=self._provider)
 
+        self.last_skipped_refs = []
         prompt = build_design_prompt(
             material_tags=[m.tag for m in material_images],
             material_images_count=len(material_images),
@@ -357,7 +360,11 @@ class ComfyUIImageGenerator:
         material_images: list[MaterialImageResult],
         reference: ReferenceImage | None,
     ) -> list[str]:
-        """按「原服装图优先 + 各材质最优图」挑选并上传，返回 ComfyUI 侧文件名。"""
+        """按「原服装图优先 + 各材质最优图」挑选并上传，返回 ComfyUI 侧文件名。
+
+        任何被丢弃的参考图（无字节 / 超出上限）都记进 `last_skipped_refs`，
+        由编排器转成任务事件 —— 否则用户只看到「成功」，材质参考其实没生效。
+        """
         payloads: list[tuple[bytes, str]] = []
 
         if reference is not None:
@@ -365,18 +372,28 @@ class ComfyUIImageGenerator:
                 payloads.append((reference.image_bytes, "原服装图"))
             else:
                 logger.warning("原服装图没有字节，ComfyUI 取不到本机地址，已跳过")
+                self.last_skipped_refs.append(
+                    "原服装图（无本地字节，ComfyUI 无法读取外链）"
+                )
 
         for image in self._pick_material_refs(material_images):
             if image.image_bytes:
                 payloads.append((image.image_bytes, f"材质图({image.tag})"))
             else:
                 logger.warning("材质图 %s 没有字节，已跳过", image.tag)
+                self.last_skipped_refs.append(
+                    f"材质图({image.tag})（无本地字节，ComfyUI 无法读取外链）"
+                )
 
         if len(payloads) > self.max_refs:
             logger.warning(
                 "参考图 %d 张超过上限 %d，已截断（优先保留原服装图与高相似度材质图）",
                 len(payloads),
                 self.max_refs,
+            )
+            self.last_skipped_refs.extend(
+                f"{label}（超出参考图上限 {self.max_refs}）"
+                for _, label in payloads[self.max_refs :]
             )
             payloads = payloads[: self.max_refs]
 

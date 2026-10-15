@@ -110,6 +110,8 @@ class OpenAICompatibleImageGenerator:
         self.reference_max_side = reference_max_side
         #: 最近一次调用的用量，供编排器记录
         self.last_usage: dict[str, Any] | None = None
+        #: 本次 generate 里被丢弃的参考图（本机地址/超上限）→ 编排器转成任务事件
+        self.last_skipped_refs: list[str] = []
 
         self._http = http_client or RetryingHttpClient(
             provider=f"生图({model})", timeout_s=timeout_s, max_retries=max_retries
@@ -125,6 +127,7 @@ class OpenAICompatibleImageGenerator:
         reference: ReferenceImage | None = None,
         num_candidates: int = 3,
     ) -> list[DesignImageResult]:
+        self.last_skipped_refs = []
         prompt = build_design_prompt(
             material_tags=[m.tag for m in material_images],
             material_images_count=len(material_images),
@@ -176,6 +179,7 @@ class OpenAICompatibleImageGenerator:
         reference: ReferenceImage | None,
     ) -> str | list[str] | None:
         refs: list[str] = []
+        labels: list[str] = []
 
         if reference is not None:
             value = self._as_reference(
@@ -183,13 +187,14 @@ class OpenAICompatibleImageGenerator:
             )
             if value:
                 refs.append(value)
+                labels.append("原服装图")
 
         for image in self._pick_material_refs(material_images):
-            value = self._as_reference(
-                image.image_bytes, image.external_url, f"材质图({image.tag})"
-            )
+            label = f"材质图({image.tag})"
+            value = self._as_reference(image.image_bytes, image.external_url, label)
             if value:
                 refs.append(value)
+                labels.append(label)
 
         if not refs:
             return None  # 退化为纯文生图
@@ -199,6 +204,10 @@ class OpenAICompatibleImageGenerator:
                 "参考图 %d 张超过上限 %d，已截断（优先保留原服装图与靠前的材质图）",
                 len(refs),
                 self.max_refs,
+            )
+            self.last_skipped_refs.extend(
+                f"{label}（超出参考图上限 {self.max_refs}）"
+                for label in labels[self.max_refs :]
             )
             refs = refs[: self.max_refs]
 
@@ -233,6 +242,9 @@ class OpenAICompatibleImageGenerator:
             logger.warning(
                 "%s 是本机地址，外部服务访问不到，已跳过: %s", label, url[:80]
             )
+            self.last_skipped_refs.append(f"{label}（本机地址，外部服务访问不到）")
+        else:
+            self.last_skipped_refs.append(f"{label}（既无字节也无可用 URL）")
         return None
 
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:

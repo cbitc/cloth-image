@@ -291,6 +291,60 @@ def test_identical_reference_bytes_are_uploaded_once() -> None:
     assert len(state["uploads"]) == 1
 
 
+def test_refs_without_bytes_are_reported_not_silently_dropped() -> None:
+    """外链型 provider（如 Unsplash）没有本地字节 → ComfyUI 读不到，必须上报。"""
+    handler, state = _server()
+    generator = _generator(handler)
+
+    generator.generate(
+        [
+            MaterialImageResult(
+                tag="桑蚕丝",
+                similarity=0.9,
+                external_url="https://images.unsplash.com/photo-1?w=1080",
+            )
+        ],
+        _DESIGN_IDEA,
+        ReferenceImage(image_bytes=_png(), caption="原服装图"),
+        num_candidates=1,
+    )
+
+    # 只上传了原服装图；材质图被跳过
+    assert len(state["uploads"]) == 1
+    assert any("桑蚕丝" in item for item in generator.last_skipped_refs)
+
+    # 工作流里只有原服装图这一个 LoadImage（node 20），没有材质图（node 21）
+    graph = state["graphs"][0]["prompt"]
+    assert graph["20"]["class_type"] == "LoadImage"
+    assert "21" not in graph
+
+
+def test_skipped_refs_are_cleared_between_generate_calls() -> None:
+    handler, state = _server()
+    generator = _generator(handler)
+
+    generator.generate(
+        [MaterialImageResult(tag="棉", external_url="https://cdn.example.com/a.jpg")],
+        _DESIGN_IDEA,
+        num_candidates=1,
+    )
+    assert generator.last_skipped_refs
+
+    generator.generate([_material("棉")], _DESIGN_IDEA, num_candidates=1)
+    assert generator.last_skipped_refs == []
+
+
+def test_turbo_preset_ignores_refs_without_reporting_skips() -> None:
+    """z_image_turbo 是文生图预设，不用参考图属预期，不应报「未生效」。"""
+    handler, state = _server()
+    generator = _generator(handler, preset="z_image_turbo")
+
+    generator.generate([_material("棉")], _DESIGN_IDEA, num_candidates=1)
+
+    assert state["uploads"] == []
+    assert generator.last_skipped_refs == []
+
+
 def test_without_any_reference_falls_back_to_empty_latent() -> None:
     handler, state = _server(
         outputs={

@@ -178,6 +178,56 @@ def test_public_reference_url_is_passed_through() -> None:
     assert calls[0]["image"] == "https://cdn.example.com/m.jpg"
 
 
+def test_localhost_reference_is_reported_as_skipped() -> None:
+    """被跳过的本机地址要自报，供编排器落任务事件。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _ok_response()
+
+    generator = _generator(handler)
+    generator.generate(
+        [
+            MaterialImageResult(
+                tag="棉", external_url="http://localhost:8000/media/materials/a.png"
+            )
+        ],
+        "x",
+        num_candidates=1,
+    )
+
+    assert any("棉" in item for item in generator.last_skipped_refs)
+
+
+def test_public_reference_url_records_no_skip() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _ok_response()
+
+    generator = _generator(handler)
+    generator.generate(
+        [MaterialImageResult(tag="棉", external_url="https://cdn.example.com/m.jpg")],
+        "x",
+        num_candidates=1,
+    )
+
+    assert generator.last_skipped_refs == []
+
+
+def test_truncated_refs_are_reported() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return _ok_response()
+
+    generator = _generator(handler, max_refs=3)
+    materials = [
+        MaterialImageResult(tag=f"材质{i}", image_bytes=_png()) for i in range(6)
+    ]
+
+    generator.generate(
+        materials, "x", ReferenceImage(image_bytes=_png()), num_candidates=1
+    )
+
+    assert len(generator.last_skipped_refs) == 4  # 7 张候选 - 上限 3
+
+
 def test_invalid_size_format_rejected_at_construction() -> None:
     with pytest.raises(ValueError, match="1024x1024"):
         _generator(lambda request: _ok_response(), size="1024*1024")

@@ -323,7 +323,10 @@ cd backend
 
 - 端点：`GET https://api.unsplash.com/search/photos?query=...&per_page=30&page=1`
 - 返回 `results[].urls.{regular,small}`（**官方要求热链**）+ `links.html` + `user.name`，
-  我们把摄影师与 Unsplash 署名写进 `title`、原图页存进 `page_url`；图片仍由编排器镜像落盘
+  我们把摄影师与 Unsplash 署名写进 `title`、原图页存进 `page_url`；
+  图片**只存外链、不镜像**（`persist_external`，保持热链），生图前由编排器**按需下载**一份字节再喂模型
+- ⚠️ ComfyUI 只吃**上传的字节**（读不到外链）→ 靠上面的「按需下载」外链材质图才能进 ComfyUI；
+  若下载失败，参考图会被丢弃，并在任务事件里提示「部分参考图未生效：…」（不再静默降级）
 - 单页最多 30 条，超出会自动翻页（搜索页 `count` 上限 60）
 - **不支持按站点过滤**，`sites` 被忽略；搜索页站点列表会随 provider 变为「Unsplash（不限站点）」
 - demo 应用限 **50 次/小时**（响应头 `X-Ratelimit-Remaining`）；超限抛 `ProviderRateLimitError`，
