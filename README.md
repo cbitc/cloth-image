@@ -12,9 +12,9 @@
 | 能力 | 签名 | 当前实现 |
 |---|---|---|
 | 搜索服装图 | `searchClothingImages :: [网站列表] -> [服装图片列表]` | `UnsplashClothingSearchProvider` |
-| 识别服装材质 | `identifyClothingMaterial :: 服装图片 -> [材质tag列表]` | `OpenAICompatibleVLMIdentifier` |
-| 查找材质图 | `searchMaterialImages :: [材质tag列表] -> [材质图片列表]` | `UnsplashMaterialSearchProvider` |
-| 图生图生成设计图 | `generateDesignImage :: ([材质图片], 设计想法) -> [设计图]` | `OpenAICompatibleImageGenerator` |
+| 识别服装材质 | `identifyClothingMaterial :: 服装图片 -> 材质卡片` | `OpenAICompatibleVLMIdentifier` |
+| 查找材质图 | `searchMaterialImages :: [检索条件] -> [面料参考图列表]` | `UnsplashMaterialSearchProvider` |
+| 图生图生成设计图 | `generateDesignImage :: ([面料图], 设计想法, 材质摘要) -> [设计图]` | `OpenAICompatibleImageGenerator` / `ComfyUIImageGenerator` |
 
 四个能力的契约定义在 `backend/app/abilities/base.py`，实现通过 `registry.register_provider()` **热插拔**。
 
@@ -70,7 +70,7 @@ stateDiagram-v2
   [*] --> PENDING
   PENDING --> IDENTIFYING
   IDENTIFYING --> AWAIT_MATERIAL_CONFIRM
-  AWAIT_MATERIAL_CONFIRM --> MATERIAL_SEARCH : 确认/修改材质 tag ★
+  AWAIT_MATERIAL_CONFIRM --> MATERIAL_SEARCH : 确认/编辑材质卡片 ★
   MATERIAL_SEARCH --> AWAIT_MATERIAL_SELECT : require_material_selection=true
   MATERIAL_SEARCH --> AWAIT_DESIGN_IDEA : 否则
   AWAIT_MATERIAL_SELECT --> AWAIT_DESIGN_IDEA : 确认挑选 ★
@@ -85,7 +85,7 @@ stateDiagram-v2
 ```
 
 三个**人工检查点**是产品成败关键（设计方案 §3）：材质识别错误会导致后续全错，
-用户花 3 秒确认 tag 可大幅提升最终满意度。检查点 1 支持**改 tag 重跑后续步骤**。
+用户花 3 秒确认卡片可大幅提升最终满意度。检查点 1 支持**改卡片重跑后续步骤**。
 
 ---
 
@@ -102,7 +102,7 @@ cloth-image/
 │  └─ app/
 │     ├─ main.py               # FastAPI 入口（CORS / 路由 / lifespan）
 │     ├─ config.py             # pydantic-settings 配置
-│     ├─ enums.py              # TaskStatus / TagSource
+│     ├─ enums.py              # TaskStatus / MaterialSource / MaterialImageOrigin
 │     ├─ schemas.py            # API 契约（与前端 types.ts 对应）
 │     ├─ storage.py            # 本地图片存储（目录 + /media URL）
 │     ├─ db/                   # SQLAlchemy 模型与会话
@@ -128,7 +128,7 @@ cloth-image/
       ├─ app/page.tsx          # 搜图 + 缩略图墙 + 多选建任务
       ├─ app/tasks/page.tsx    # 任务看板（SSE）
       ├─ app/tasks/[id]/page.tsx  # 任务详情（检查点 + 结果画廊）
-      ├─ components/           # Pipeline / SelectableImageGrid / TagEditor / ResultGallery
+      ├─ components/           # Pipeline / SelectableImageGrid / MaterialCardEditor / ResultGallery
       └─ lib/                  # api / types / hooks / taskStatus
 ```
 
@@ -193,6 +193,8 @@ npm run dev          # 默认连 http://localhost:8000
 | `IMAGE_MAX_REFS` | `3` | 参考图上限；实测 `qwen-image-3.0` 只支持 0~3 张 |
 | `PROMPT_EXTEND` | `false` | 是否允许模型改写提示词（已结构化组装，建议关闭） |
 | `IDENTIFY_CACHE_ENABLED` | `true` | 相同图片 + 相同模型时复用识别结果 |
+| `IDENTIFY_SWATCH_ENABLED` | `true` | 识别时从原图裁一块干净面料小样（swatch）作为保真锚点 |
+| `IDENTIFY_SWATCH_MAX_SIDE` | `768` | 材质小样的最长边（落盘与参考注入的尺寸上限） |
 | `PROVIDER_TIMEOUT_S` | `90` | 外部调用超时（秒） |
 | `PROVIDER_MAX_RETRIES` | `3` | 外部调用失败重试次数 |
 | `VISION_MAX_IMAGE_SIDE` | `1568` | 送模型前图片等比缩放的最长边 |
@@ -207,7 +209,7 @@ npm run dev          # 默认连 http://localhost:8000
 
 - **四个能力**各自显式选择实现，且仅当选中真实实现时才展开配置项：
   - 搜索服装图：`unsplash`（Unsplash 图库检索，只需 Access Key）
-  - 查找材质图：`unsplash`（Unsplash 面料特写，每个材质 tag 一次请求）
+  - 查找材质图：`unsplash`（Unsplash 面料特写，按卡片里的面料名每个锚一次请求）
   - 识别：`openai_compatible`（OpenAI 兼容 `/chat/completions`）
   - 生图：`openai_compatible_image`（OpenAI 兼容 `/images/generations`）
 - 调整生图参数、识别参数、流水线参数与 HTTP 超时/重试
@@ -241,7 +243,10 @@ npm run dev          # 默认连 http://localhost:8000
 | POST | `/api/tasks` | 勾选 N 张图 → 创建 N 个任务 |
 | GET | `/api/tasks` | 任务列表（看板） |
 | GET | `/api/tasks/{id}` | 任务详情 |
-| POST | `/api/tasks/{id}/confirm-materials` | ★检查点1：确认/修改材质 tag → 触发材质检索 |
+| PUT | `/api/tasks/{id}/material-card` | 编辑材质卡片（局部更新，只写库不推进状态） |
+| POST | `/api/tasks/{id}/confirm-materials` | ★检查点1：确认材质卡片 → 按卡片检索面料图（无 body） |
+| POST | `/api/tasks/{id}/material-images` | 编辑入口2：上传面料图（multipart `files`，进参考图池） |
+| DELETE | `/api/tasks/{id}/material-images/{image_id}` | 从参考图池移除一张面料图 |
 | POST | `/api/tasks/{id}/select-materials` | ★检查点2：挑选材质图 |
 | POST | `/api/tasks/{id}/generate` | ★检查点3：填设计想法（`design_idea` / `num_candidates` / `use_reference`）→ 生成设计图 |
 | POST | `/api/tasks/{id}/retry` | 失败重试 |
@@ -249,7 +254,8 @@ npm run dev          # 默认连 http://localhost:8000
 | POST | `/api/tasks/bulk-delete` | 批量删除任务（body：`{"task_ids": [...]}`，返回 `{deleted, not_found}`） |
 | GET | `/api/tasks/{id}/events` | **SSE** 任务进度流（`snapshot` / `event`） |
 | GET | `/api/events/stream` | **SSE** 看板任务列表流 |
-| GET | `/api/material-taxonomy` | 受控材质词表 |
+| GET | `/api/material-taxonomy` | 受控材质词表（面料名 / 分类 / 光泽 / 垂坠 / 关键词） |
+| GET | `/api/material-taxonomy/card-options` | 材质卡片的下拉受控取值（图案 5 类 / 光泽 4 档 / 品类 / 面料名…） |
 | GET | `/api/cache/identify/stats` | 识别缓存规模 / 累计命中 / 估算省下的 token |
 | DELETE | `/api/cache/identify` | 清空识别缓存（可选 `?model=` 只清某个模型） |
 | GET | `/api/settings` | 能力配置：字段清单 + 取值 + 密钥状态 + 能力可用状态 |
@@ -281,16 +287,53 @@ POST /api/tasks/{id}/generate
 { "design_idea": "改成收腰版型", "num_candidates": 2, "use_reference": false }
 ```
 
-### 7.2 识别结果缓存
+### 7.2 材质卡片（识别与生成之间的中间层）
 
-同一张图 + 同一个模型 → 直接复用上次的识别结果，跳过 VLM 调用。
+识别不再输出「材质 tag 列表」，而是一张**可编辑的材质卡片**（MVP 计划 §3）：
+
+```json
+{
+  "category": "连衣裙",
+  "regions": [{
+    "region_id": "body", "region_type": "身片",
+    "color":   { "dominant_hex": "#2B3A4A", "dominant_name": "深灰蓝",
+                 "palette": [{"hex": "#2B3A4A", "ratio": 0.72}, ...], "distribution": "整体均匀" },
+    "pattern": { "type": "纯色", "scale": "", "direction": "", "layout": "全身" },
+    "optical": { "gloss": "哑光", "transparency": "不透明" },
+    "fabric":  { "material": "桑蚕丝", "material_en": "Mulberry Silk", "category": "天然纤维" },
+    "behavior":{ "weight": "中等", "drape": "适中", "is_default": true },
+    "confidence": { "color": 0.95, "pattern": 0.91, "gloss": 0.83 }
+  }],
+  "note": "",
+  "swatch": { "url": "...", "thumbnail_url": "...", "crop_box": [0.3, 0.4, 0.6, 0.7] }
+}
+```
+
+要点：
+
+- **A 层只做视觉属性**（颜色 / 图案 / 光泽），B 层（面料）只填受控词表里的面料名，
+  C 层（手感）填默认值并标记 `is_default` —— 后续接模型时不用改 Schema
+- **区域**：本期末接分割模型，`regions` 恒为单条 `body / 身片`；
+  字段已预留，接模型时无需迁移
+- **逐字段置信度**：低于 70% 的字段在前端标黄提示「待确认」
+- **材质小样（swatch）**：由 VLM 给出「干净面料块」的归一化框，后端从原图裁一小块落盘（
+  兜底：框非法时退化为图像中心区域）—— 它是生成阶段的**保真锚点**
+- **三种编辑入口**：改属性（`PUT /material-card`）、换小样（上传面料图）、写文字（卡片 `note`）
+- 只有**面料名**会用于检索面料图；颜色 / 图案 / 光泽作为检索增强（英文时才会拼进 query，
+  因为 Unsplash 对中文命中率低）
+
+### 7.3 识别结果缓存
+
+同一张图 + 同一个模型 → 直接复用上次识别出的材质卡片，跳过 VLM 调用。
 实测单次识别约 **1500 tokens**，而「同一张图建多个任务」是常见操作，收益直接。
 
 - 缓存 key = `(图片内容 sha256[:32], 模型名)`；**模型名参与 key**，换模型后旧缓存自然失效
 - 图片哈希在落盘时顺带算出，存在 `clothing_image.image_hash`
+- 缓存的是卡片的**语义部分**（含各区域的裁剪框）；小样字节不进缓存，
+  命中后由编排器拿原图按框重裁 —— 所以缓存只对「同一张图」有意义
 - 命中时会在任务事件里写明「命中识别缓存…省约 N tokens」，前端执行日志可见
 - 外链图未下载时算不出哈希，此时不缓存（不影响功能）
-- 缓存内容损坏会自动丢弃并重新识别
+- 缓存内容损坏（如旧版本存的是 tag 列表）会自动丢弃并重新识别
 
 ---
 
@@ -357,7 +400,8 @@ cd backend
 - demo 应用限 **50 次/小时**（响应头 `X-Ratelimit-Remaining`）；超限抛 `ProviderRateLimitError`，
   接口以 **502** 返回可读原因
 - **两个能力共用**同一份客户端（`abilities/unsplash_client.py`）与同一个 Access Key：
-  服装图按关键词直接搜；材质图把每个材质 tag 转成 `{material_en} fabric texture close up`
+  服装图按关键词直接搜；面料图把卡片里的面料名转成 `{material_en} fabric texture close up`
+  （颜色 / 图案 / 光泽作为可选增强，但只在 ASCII 时才拼进 query）
   各搜一次（词表里没有英文名时回退 `taxonomy.build_material_query`）
 - 材质图的 `similarity` 是**排名代理**（Unsplash 不返回相关性分数），仅用于排序展示
 - 提示：Unsplash 以英文关键词效果最佳，中文词命中率有限
@@ -371,7 +415,7 @@ python -m app.tools.probe --image x.jpg    # 指定输入图
 python -m app.tools.probe --skip-image     # 只探识别
 ```
 
-会打印生效的 provider、识别出的 tag 与依据、token 用量、生图返回的 URL。
+会打印生效的 provider、识别出的材质卡片（含小样字节数）与依据、token 用量、生图返回的 URL。
 
 ### 9.5 新增一个 provider
 
@@ -400,8 +444,9 @@ UI、校验与告警（`config_warnings`）都会自动跟随 spec，无需改�
    生成结果标注来源、定位为「内部设计参考」。
 2. **反爬**：能用 API 就别爬；爬虫方案需代理池与验证码处理。
 3. **成本**：VLM 识别约 $0.001–0.01/张，图生图约 $0.02–0.08/张，单任务全链路约 $0.05–0.15。
-4. **识别准确率**：光泽类材质（真丝 vs 醋酸 vs 缎面涤纶）单图难区分，
-   「可能度分析 + 人工确认」是必要设计，不追求全自动 100% 准确。
+4. **识别准确率**：光泽类面料（真丝 vs 醋酸 vs 缎面涤纶）单图难区分，
+   「逐字段置信度 + 人工确认」是必要设计，不追求全自动 100% 准确。
+   卡片里的 B 层（织法）与 C 层（垂坠/厚薄）本体期未做推断，均为占位默认值。
 5. **配置页无鉴权**：`/api/settings` 可以写入密钥。仅限本机 / 内网使用；
    对外部署前必须补鉴权或设 `SETTINGS_WRITE_ENABLED=false`。
 6. **密钥不要写进 `.env.example`**：该文件**不在** `.gitignore` 里，会被提交；
@@ -410,6 +455,18 @@ UI、校验与告警（`config_warnings`）都会自动跟随 spec，无需改�
 ---
 
 ## 11. 后续可做
+
+**材质卡片已留位、尚未实现（Schema 已就绪，不需要迁移）**：
+
+- **区域分割**：接服装解析模型（SAM / SCHP）→ `regions` 从单条 `body` 变为
+  领 / 袖 / 身片 / 下摆 / 辅料，并参与生成时的**空间条件**（哪块区域换哪种料）
+- **纹理指纹**：`swatch.texture_embedding_ref` 现为空串，接入 CLIP/SigLIP 后
+  可用于「按质感找相似面料」与自建面料图库检索
+- **小样参考注入**：现在小样只展示、不直接作生图参考（参考图池仍来自检索 + 上传）；
+  接入 IP-Adapter 类注入后可让生成更贴合小样质感
+- **结构条件**：用原图线稿 / 深度图（ControlNet 类）冻版型，比纯参考图更稳
+
+**其他**：
 
 - 自建材质图向量库（一次性覆盖常用材质，零外部 API 成本）
 - 多模型对比生成（同一任务并行多个生成模型）

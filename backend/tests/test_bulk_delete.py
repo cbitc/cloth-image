@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy import func, select
 
-from app.db.models import MaterialTag, Task, TaskEvent
+from app.db.models import MaterialCard, Task, TaskEvent
 from app.db.session import SessionLocal
 
 
@@ -39,11 +39,11 @@ def test_bulk_delete_removes_tasks_and_cascades(
     assert first["id"] not in listed
     assert second["id"] not in listed
 
-    # 级联：材质 tag 与任务事件也应一并删除（否则会留下孤儿行）
+    # 级联：材质卡片与任务事件也应一并删除（否则会留下孤儿行）
     with SessionLocal() as db:
         for task_id in (first["id"], second["id"]):
             assert db.get(Task, task_id) is None
-            assert _count(db, MaterialTag, task_id) == 0
+            assert _count(db, MaterialCard, task_id) == 0
             assert _count(db, TaskEvent, task_id) == 0
 
 

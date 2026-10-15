@@ -1,10 +1,11 @@
 import type {
+  CardOptions,
   ClothingImage,
   CreateTasksResponse,
   DesignImage,
   IdentifyCacheStats,
+  MaterialCardPatch,
   MaterialTagDef,
-  MaterialTagInput,
   SearchClothingResponse,
   SettingsView,
   SiteOption,
@@ -50,6 +51,10 @@ export const api = {
 
   taxonomy: () => request<MaterialTagDef[]>("/api/material-taxonomy"),
 
+  /** 材质卡片的受控取值（图案 / 光泽 / 品类 / 面料名…），避免前端硬编码漂移 */
+  cardOptions: () =>
+    request<CardOptions>("/api/material-taxonomy/card-options"),
+
   createTasks: (payload: {
     clothing_image_ids: string[];
     design_idea?: string;
@@ -66,10 +71,40 @@ export const api = {
 
   getTask: (id: string) => request<TaskDetail>(`/api/tasks/${id}`),
 
-  confirmMaterials: (id: string, tags: MaterialTagInput[]) =>
-    request<TaskDetail>(`/api/tasks/${id}/confirm-materials`, {
+  /** 编辑材质卡片（局部更新，只写库不推进状态） */
+  updateMaterialCard: (id: string, patch: MaterialCardPatch) =>
+    request<TaskDetail>(`/api/tasks/${id}/material-card`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    }),
+
+  /** ★检查点1：确认材质卡片 → 触发面料图检索 */
+  confirmMaterials: (id: string) =>
+    request<TaskDetail>(`/api/tasks/${id}/confirm-materials`, { method: "POST" }),
+
+  /** 编辑入口2「换小样」：上传面料图（进参考图池，参与生图） */
+  uploadMaterialImages: async (id: string, files: FileList | File[]) => {
+    const form = new FormData();
+    for (const file of Array.from(files)) form.append("files", file);
+    const res = await fetch(`${API_BASE}/api/tasks/${id}/material-images`, {
       method: "POST",
-      body: JSON.stringify({ tags }),
+      body: form,
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        detail = (await res.json()).detail ?? detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(`${res.status} ${detail}`);
+    }
+    return (await res.json()) as TaskDetail;
+  },
+
+  deleteMaterialImage: (id: string, imageId: string) =>
+    request<TaskDetail>(`/api/tasks/${id}/material-images/${imageId}`, {
+      method: "DELETE",
     }),
 
   selectMaterials: (id: string, materialImageIds: string[] | null) =>

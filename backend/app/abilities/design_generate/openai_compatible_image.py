@@ -126,20 +126,19 @@ class OpenAICompatibleImageGenerator:
         design_idea: str,
         reference: ReferenceImage | None = None,
         num_candidates: int = 3,
+        material_summary: str = "",
     ) -> list[DesignImageResult]:
         self.last_skipped_refs = []
 
         # 先算**实际**会送出的参考图，再据此组装 prompt：
-        # 候选材质图可达十几个但受 max_refs 限制，按候选数写会声称不存在的「参考图N」。
-        image_field, used_tags, has_reference = self._build_image_field(
+        # 候选材质图可达十几张但受 max_refs 限制，按候选数写会声称不存在的「参考图N」。
+        image_field, used_labels, has_reference = self._build_image_field(
             material_images, reference
         )
-        material_ref_count = len(used_tags)
-        if not used_tags:  # 材质图一张都没用上 → 退回纯文字要求
-            used_tags = [m.tag for m in material_images]
+        material_ref_count = len(used_labels)
 
         prompt = build_design_prompt(
-            material_tags=used_tags,
+            material_summary=material_summary,
             material_images_count=material_ref_count,
             design_idea=design_idea,
             has_reference=has_reference,
@@ -188,13 +187,13 @@ class OpenAICompatibleImageGenerator:
         material_images: list[MaterialImageResult],
         reference: ReferenceImage | None,
     ) -> tuple[str | list[str] | None, list[str], bool]:
-        """返回 (image 字段, 入选的材质 tag, 是否含原服装图)。
+        """返回 (image 字段, 入选的材质标签, 是否含原服装图)。
 
         一并返回入选项，便于 caller 组装与实际一致的 prompt。
         """
         refs: list[str] = []
         labels: list[str] = []
-        used_tags: list[str] = []
+        used_labels: list[str] = []
         has_reference = False
 
         if reference is not None:
@@ -207,12 +206,12 @@ class OpenAICompatibleImageGenerator:
                 has_reference = True
 
         for image in self._pick_material_refs(material_images):
-            label = f"材质图({image.tag})"
+            label = f"材质图({image.label})"
             value = self._as_reference(image.image_bytes, image.external_url, label)
             if value:
                 refs.append(value)
                 labels.append(label)
-                used_tags.append(image.tag)
+                used_labels.append(image.label)
 
         if not refs:
             return None, [], False  # 退化为纯文生图
@@ -228,25 +227,25 @@ class OpenAICompatibleImageGenerator:
                 for label in labels[self.max_refs :]
             )
             refs = refs[: self.max_refs]
-            used_tags = used_tags[: len(refs) - (1 if has_reference else 0)]
+            used_labels = used_labels[: len(refs) - (1 if has_reference else 0)]
 
-        return (refs[0] if len(refs) == 1 else refs), used_tags, has_reference
+        return (refs[0] if len(refs) == 1 else refs), used_labels, has_reference
 
     @staticmethod
     def _pick_material_refs(
         material_images: list[MaterialImageResult],
     ) -> list[MaterialImageResult]:
-        """每个材质 tag 只留相似度最高的一张，再按相似度降序。
+        """每个材质标签只留相似度最高的一张，再按相似度降序。
 
-        否则同一个 tag 的多张图会占满有限的参考位，其它材质反而进不来。
+        否则同一标签的多张图会占满有限的参考位，其它材质反而进不来。
         """
-        best_per_tag: dict[str, MaterialImageResult] = {}
+        best_per_label: dict[str, MaterialImageResult] = {}
         for image in material_images:
-            current = best_per_tag.get(image.tag)
+            current = best_per_label.get(image.label)
             if current is None or image.similarity > current.similarity:
-                best_per_tag[image.tag] = image
+                best_per_label[image.label] = image
         return sorted(
-            best_per_tag.values(), key=lambda item: item.similarity, reverse=True
+            best_per_label.values(), key=lambda item: item.similarity, reverse=True
         )
 
     def _as_reference(

@@ -15,6 +15,19 @@ def _create_task(client, clothing_image_id: str, **kwargs) -> dict:
     return resp.json()["tasks"][0]
 
 
+def _confirm(client, task_id: str) -> dict:
+    """检查点 1：确认材质卡片（不再需要传 tags）。"""
+    resp = client.post(f"/api/tasks/{task_id}/confirm-materials")
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def _patch_card(client, task_id: str, patch: dict) -> dict:
+    resp = client.put(f"/api/tasks/{task_id}/material-card", json=patch)
+    assert resp.status_code == 200, resp.text
+    return resp.json()["material_card"]
+
+
 def test_health(client) -> None:
     resp = client.get("/api/health")
     assert resp.status_code == 200
@@ -44,34 +57,54 @@ def test_full_pipeline_manual_checkpoints(client, sample_clothing_image_id) -> N
     # 说明：sync 模式下请求返回时第一阶段已执行完
     detail = client.get(f"/api/tasks/{task_id}").json()
     assert detail["status"] == TaskStatus.AWAIT_MATERIAL_CONFIRM
-    assert 2 <= len(detail["material_tags"]) <= 4
+    assert detail["has_material_card"] is True
 
-    # 检查点 1：用户确认（改写第一个 tag）
-    tags = [
-        {
-            "material": "桑蚕丝",
-            "material_en": "Mulberry Silk",
-            "confidence": 0.91,
-            "evidence": "用户确认：强光泽、细腻垂坠",
-            "category": "天然纤维",
-        },
-        {
-            "material": "醋酸",
-            "material_en": "Acetate",
-            "confidence": 0.62,
-            "evidence": "用户补充候选",
-            "category": "再生纤维",
-        },
-    ]
-    resp = client.post(f"/api/tasks/{task_id}/confirm-materials", json={"tags": tags})
-    assert resp.status_code == 200, resp.text
+    card = detail["material_card"]
+    assert card and card["regions"]
+    region = card["regions"][0]
+    assert region["region_id"] == "body"
+    assert region["color"]["dominant_hex"].startswith("#")
+    assert region["pattern"]["type"]
+    assert region["optical"]["gloss"]
+    assert all(
+        0.0 <= region["confidence"][key] <= 1.0 for key in ("color", "pattern", "gloss")
+    )
+    assert card["swatch"]["url"]  # 小样已落盘（生成阶段的保真锚点）
+    assert card["swatch"]["crop_box"]
+    assert card["source"] == "ai"
 
+    # 检查点 1：用户改属性（图案 / 光泽 / 面料）并写备注
+    updated = _patch_card(
+        client,
+        task_id,
+        {
+            "category": "连衣裙",
+            "note": "面料要更挺括一点",
+            "region": {
+                "pattern": {"type": "条纹"},
+                "optical": {"gloss": "缎面"},
+                "fabric": {"material": "醋酸"},
+            },
+        },
+    )
+    edited = updated["regions"][0]
+    assert updated["source"] == "user"
+    assert edited["pattern"]["type"] == "条纹"
+    assert edited["optical"]["gloss"] == "缎面"
+    assert edited["fabric"]["material"] == "醋酸"
+    assert edited["fabric"]["material_en"] == "Acetate"  # 按受控词表回填
+    assert updated["note"] == "面料要更挺括一点"
+    # 只改属性不应丢掉小样
+    assert updated["swatch"]["url"] == card["swatch"]["url"]
+
+    # 确认 → 按卡片里的面料名检索面料图
+    confirmed = _confirm(client, task_id)
+    assert confirmed["status"] == TaskStatus.AWAIT_DESIGN_IDEA
     detail = client.get(f"/api/tasks/{task_id}").json()
-    assert [t["material"] for t in detail["material_tags"]] == ["桑蚕丝", "醋酸"]
-    assert all(t["source"] == "user" for t in detail["material_tags"])
     assert detail["status"] == TaskStatus.AWAIT_DESIGN_IDEA
-    assert len(detail["material_images"]) == 2 * 3  # 2 个 tag × 每 tag 3 张
-    assert all(m["image_url"] for m in detail["material_images"])
+    assert len(detail["material_images"]) == 3  # 1 个面料锚 × 每锚 3 张
+    assert {m["label"] for m in detail["material_images"]} == {"醋酸"}
+    assert all(m["origin"] == "search" for m in detail["material_images"])
 
     # 检查点 3：填设计想法 → 生成
     resp = client.post(
@@ -84,7 +117,11 @@ def test_full_pipeline_manual_checkpoints(client, sample_clothing_image_id) -> N
     assert detail["status"] == TaskStatus.DONE
     assert detail["design_idea"] == DESIGN_IDEA
     assert len(detail["design_images"]) == 2
-    assert DESIGN_IDEA in detail["design_images"][0]["prompt"]
+    prompt = detail["design_images"][0]["prompt"]
+    assert DESIGN_IDEA in prompt
+    # 卡片编译出的材质要求（含用户备注）应进 prompt
+    assert "醋酸" in prompt
+    assert "面料要更挺括一点" in prompt
 
     # 事件流可用于进度展示
     stages = {e["stage"] for e in detail["events"]}
@@ -99,16 +136,7 @@ def test_pipeline_with_material_selection_checkpoint(
     )
     task_id = task["id"]
 
-    detail = client.get(f"/api/tasks/{task_id}").json()
-    tags = [
-        {
-            "material": t["material"],
-            "confidence": t["confidence"],
-            "evidence": t["evidence"],
-        }
-        for t in detail["material_tags"]
-    ]
-    client.post(f"/api/tasks/{task_id}/confirm-materials", json={"tags": tags})
+    _confirm(client, task_id)
 
     detail = client.get(f"/api/tasks/{task_id}").json()
     assert detail["status"] == TaskStatus.AWAIT_MATERIAL_SELECT
@@ -133,16 +161,7 @@ def test_auto_generate_flow(client, sample_clothing_image_id) -> None:
     )
     task_id = task["id"]
 
-    detail = client.get(f"/api/tasks/{task_id}").json()
-    tags = [
-        {
-            "material": t["material"],
-            "confidence": t["confidence"],
-            "evidence": t["evidence"],
-        }
-        for t in detail["material_tags"]
-    ]
-    client.post(f"/api/tasks/{task_id}/confirm-materials", json={"tags": tags})
+    _confirm(client, task_id)
 
     # 确认后自动串联：材质检索 → 生成 → DONE
     detail = client.get(f"/api/tasks/{task_id}").json()
@@ -171,16 +190,7 @@ def test_generate_again_from_done(client, sample_clothing_image_id) -> None:
     task = _create_task(client, sample_clothing_image_id)
     task_id = task["id"]
 
-    detail = client.get(f"/api/tasks/{task_id}").json()
-    tags = [
-        {
-            "material": t["material"],
-            "confidence": t["confidence"],
-            "evidence": t["evidence"],
-        }
-        for t in detail["material_tags"]
-    ]
-    client.post(f"/api/tasks/{task_id}/confirm-materials", json={"tags": tags})
+    _confirm(client, task_id)
 
     first = client.post(
         f"/api/tasks/{task_id}/generate",
@@ -253,16 +263,7 @@ def test_generate_reports_generating_before_background_runs(
     """
     task = _create_task(client, sample_clothing_image_id)
     task_id = task["id"]
-    detail = client.get(f"/api/tasks/{task_id}").json()
-    tags = [
-        {
-            "material": t["material"],
-            "confidence": t["confidence"],
-            "evidence": t["evidence"],
-        }
-        for t in detail["material_tags"]
-    ]
-    client.post(f"/api/tasks/{task_id}/confirm-materials", json={"tags": tags})
+    _confirm(client, task_id)
 
     noop = _NoopDispatcher()
     app, tasks_api = _override_dispatcher(noop)
@@ -283,22 +284,11 @@ def test_confirm_materials_reports_searching_before_background_runs(
 ) -> None:
     task = _create_task(client, sample_clothing_image_id)
     task_id = task["id"]
-    detail = client.get(f"/api/tasks/{task_id}").json()
-    tags = [
-        {
-            "material": t["material"],
-            "confidence": t["confidence"],
-            "evidence": t["evidence"],
-        }
-        for t in detail["material_tags"]
-    ]
 
     noop = _NoopDispatcher()
     app, tasks_api = _override_dispatcher(noop)
     try:
-        resp = client.post(
-            f"/api/tasks/{task_id}/confirm-materials", json={"tags": tags}
-        )
+        resp = client.post(f"/api/tasks/{task_id}/confirm-materials")
         assert resp.status_code == 200, resp.text
         assert resp.json()["status"] == TaskStatus.MATERIAL_SEARCH
         assert noop.calls == ["material_search"]

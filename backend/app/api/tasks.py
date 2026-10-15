@@ -4,9 +4,12 @@
   POST   /api/tasks                       勾选 N 张图 → 创建 N 个任务（并发识别）
   GET    /api/tasks                       任务列表（看板）
   GET    /api/tasks/{id}                  任务详情
-  POST   /api/tasks/{id}/confirm-materials  ★检查点1：确认 / 修改材质 tag → 触发材质检索
-  POST   /api/tasks/{id}/select-materials   ★检查点2：挑选材质图
-  POST   /api/tasks/{id}/generate           ★检查点3：填设计想法 → 生成设计图
+  PUT    /api/tasks/{id}/material-card     编辑材质卡片（局部更新，不推进状态）
+  POST   /api/tasks/{id}/confirm-materials ★检查点1：确认卡片 → 触发面料图检索
+  POST   /api/tasks/{id}/material-images   编辑入口2：上传面料图（进参考图池）
+  DELETE /api/tasks/{id}/material-images/{image_id}
+  POST   /api/tasks/{id}/select-materials  ★检查点2：挑选面料图
+  POST   /api/tasks/{id}/generate          ★检查点3：填设计想法 → 生成设计图
   POST   /api/tasks/{id}/retry            失败重试
   DELETE /api/tasks/{id}
   POST   /api/tasks/bulk-delete          批量删除（按 id 列表）
@@ -17,33 +20,42 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.db.models import MaterialTag, Task
+from app.config import get_settings
+from app.db.models import MaterialImage, Task
 from app.db.session import get_db
-from app.enums import TagSource, TaskStatus
+from app.enums import MaterialImageOrigin, TaskStatus
 from app.schemas import (
     BulkDeleteTasksRequest,
     BulkDeleteTasksResponse,
-    ConfirmMaterialsRequest,
     CreateTasksRequest,
     CreateTasksResponse,
     GenerateRequest,
+    MaterialCardUpdateRequest,
     SelectMaterialsRequest,
     TaskDetail,
     TaskSummary,
 )
-from app.taxonomy import get_definition
 from app.tasks import orchestrator
 from app.tasks.dispatcher import get_dispatcher
+from app.tasks.persist import persist_bytes
 from app.tasks.serialize import build_detail, build_summary
 from app.tasks.state_machine import can_transition
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 _SELECT_STATES = {
+    TaskStatus.AWAIT_MATERIAL_SELECT,
+    TaskStatus.AWAIT_DESIGN_IDEA,
+    TaskStatus.DONE,
+}
+
+#: 允许改卡片 / 传面料图的状态（识别中、生成中的中间态不允许，避免和 worker 抢写）
+_CARD_EDITABLE_STATES = {
+    TaskStatus.AWAIT_MATERIAL_CONFIRM,
     TaskStatus.AWAIT_MATERIAL_SELECT,
     TaskStatus.AWAIT_DESIGN_IDEA,
     TaskStatus.DONE,
@@ -120,7 +132,7 @@ def bulk_delete_tasks(
     """批量删除任务。
 
     - 与单删一致：不限制状态（进行中的任务也会被删；worker 对已删除任务是安全退出）。
-    - 材质 tag / 面料图 / 设计图 / 事件随 ORM 级联删除。
+    - 材质卡片 / 面料图 / 设计图 / 事件随 ORM 级联删除。
     - 不存在的 id 不算失败，在 `not_found` 里返回，便于前端提示。
     """
     ids = list(dict.fromkeys(payload.task_ids))  # 去重且保序
@@ -142,43 +154,119 @@ def get_task(task_id: str, db: Session = Depends(get_db)) -> TaskDetail:
     return build_detail(_get_task(db, task_id))
 
 
+@router.put("/{task_id}/material-card", response_model=TaskDetail)
+def update_material_card(
+    task_id: str,
+    payload: MaterialCardUpdateRequest,
+    db: Session = Depends(get_db),
+) -> TaskDetail:
+    """编辑入口 1「改属性」+ 入口 3「写文字」：局部更新材质卡片。
+
+    只写库、不推进状态 —— 用户可能改好几次才确认。确认走 `confirm-materials`。
+    """
+    task = _get_task(db, task_id)
+    if task.material_card is None:
+        raise HTTPException(status_code=404, detail="该任务还没有材质卡片")
+    if TaskStatus(task.status) not in _CARD_EDITABLE_STATES:
+        raise HTTPException(
+            status_code=409, detail=f"当前状态 {task.status} 不支持编辑材质卡片"
+        )
+
+    patch = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if patch:
+        orchestrator.update_material_card(db, task, patch)
+    db.expire_all()
+    return build_detail(_get_task(db, task_id))
+
+
 @router.post("/{task_id}/confirm-materials", response_model=TaskDetail)
 def confirm_materials(
     task_id: str,
-    payload: ConfirmMaterialsRequest,
     db: Session = Depends(get_db),
     dispatcher=Depends(get_dispatcher),
 ) -> TaskDetail:
+    """★检查点 1：确认材质卡片 → 按卡片检索面料图。
+
+    卡片编辑在 `PUT /material-card`；本接口只做「确认 + 推进」，无请求体。
+    """
     task = _get_task(db, task_id)
+    if task.material_card is None:
+        raise HTTPException(status_code=400, detail="该任务还没有材质卡片，无法确认")
     if not can_transition(task.status, TaskStatus.MATERIAL_SEARCH):
         raise HTTPException(
             status_code=409,
             detail=f"当前状态 {task.status} 不支持确认材质",
         )
 
-    for old in list(task.material_tags):
-        db.delete(old)
-    db.flush()
-
-    for index, tag in enumerate(payload.tags):
-        definition = get_definition(tag.material) or {}
-        db.add(
-            MaterialTag(
-                task_id=task.id,
-                material=tag.material,
-                material_en=tag.material_en or definition.get("material_en", ""),
-                confidence=tag.confidence,
-                evidence=tag.evidence,
-                category=tag.category or definition.get("category", ""),
-                source=str(TagSource.USER),
-                rank=index,
-            )
-        )
-    db.commit()
-
+    orchestrator.mark_card_confirmed(db, task)
     _advance(db, task, TaskStatus.MATERIAL_SEARCH)
     dispatcher.dispatch_material_search(task.id)
     db.expire_all()
+    return build_detail(_get_task(db, task_id))
+
+
+@router.post("/{task_id}/material-images", response_model=TaskDetail)
+async def upload_material_images(
+    task_id: str,
+    files: list[UploadFile] = File(..., description="用户上传的面料图（可多张）"),
+    db: Session = Depends(get_db),
+) -> TaskDetail:
+    """编辑入口 2「换小样」：上传面料图 → 直接进参考图池参与生图。
+
+    与检索结果同在 `material_image` 池里；重跑检索**只清 origin=search 的行**，
+    故上传图不会被覆盖。
+    """
+    task = _get_task(db, task_id)
+    if TaskStatus(task.status) not in _CARD_EDITABLE_STATES:
+        raise HTTPException(
+            status_code=409, detail=f"当前状态 {task.status} 不支持上传面料图"
+        )
+
+    max_bytes = get_settings().download_max_bytes
+    next_rank = max((m.rank for m in task.material_images), default=-1) + 1
+    saved = 0
+    for index, upload in enumerate(files):
+        data = await upload.read()
+        if not data:
+            continue
+        if len(data) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"图片过大（{len(data)} 字节），上限 {max_bytes} 字节",
+            )
+        persisted = persist_bytes("materials", data, upload.content_type or "image/png")
+        db.add(
+            MaterialImage(
+                task_id=task.id,
+                label=orchestrator.UPLOAD_LABEL,
+                image_url=persisted.image_url,
+                thumbnail_url=persisted.thumbnail_url,
+                storage_key=persisted.storage_key,
+                similarity=1.0,
+                selected=True,
+                rank=next_rank + index,
+                origin=str(MaterialImageOrigin.UPLOAD),
+            )
+        )
+        saved += 1
+
+    if not saved:
+        raise HTTPException(status_code=400, detail="没有读到有效的图片内容")
+    db.commit()
+    return build_detail(_get_task(db, task_id))
+
+
+@router.delete("/{task_id}/material-images/{image_id}", response_model=TaskDetail)
+def delete_material_image(
+    task_id: str, image_id: str, db: Session = Depends(get_db)
+) -> TaskDetail:
+    """从参考图池里移除一张面料图（检索结果与上传图都可移除）。"""
+    task = _get_task(db, task_id)
+    image = next((m for m in task.material_images if m.id == image_id), None)
+    if image is None:
+        raise HTTPException(status_code=404, detail=f"面料图不存在: {image_id}")
+    db.delete(image)
+    db.commit()
     return build_detail(_get_task(db, task_id))
 
 

@@ -3,8 +3,8 @@
 表结构：
   clothing_image  搜索得到的服装图（可作为任务的输入）
   task            一个任务 = 一张被选中的服装图走一遍流水线
-  material_tag    材质 tag（AI 识别 + 用户确认后）
-  material_image  材质图（按 tag 检索得到）
+  material_card   材质卡片（识别结果，用户可编辑；一张任务一张卡片）
+  material_image  面料参考图（按卡片检索得到 + 用户上传）
   design_image    生成的设计图
   task_event      任务进度事件（用于 SSE 推送与审计）
 """
@@ -29,7 +29,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
-from app.enums import TagSource, TaskStatus
+from app.enums import MaterialImageOrigin, MaterialSource, TaskStatus
 
 
 def _uuid() -> str:
@@ -88,8 +88,9 @@ class Task(Base):
     )
 
     clothing_image: Mapped[ClothingImage] = relationship(lazy="joined")
-    material_tags: Mapped[list["MaterialTag"]] = relationship(
-        back_populates="task", cascade="all, delete-orphan", order_by="MaterialTag.rank"
+    #: 材质卡片（1:1）。识别完成时创建；用户编辑只改卡片，不新建行
+    material_card: Mapped["MaterialCard | None"] = relationship(
+        back_populates="task", cascade="all, delete-orphan", uselist=False
     )
     material_images: Mapped[list["MaterialImage"]] = relationship(
         back_populates="task", cascade="all, delete-orphan"
@@ -102,30 +103,57 @@ class Task(Base):
     )
 
 
-class MaterialTag(Base):
-    __tablename__ = "material_tag"
+class MaterialCard(Base):
+    """材质卡片：连接「识别」与「生成」的最小充分中间层（MVP 计划 §3.1）。
+
+    卡片主体存 `payload` JSON —— 嵌套结构（区域 / 颜色 / 图案 / 光泽 / B、C 层 /
+    逐字段置信度）随 Schema 演进时不必改表；只有需要查询与直接展示的少量字段单独成列。
+    `swatch`（干净面料小样）是真实图片，必须落盘后存 key / URL。
+    """
+
+    __tablename__ = "material_card"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    task_id: Mapped[str] = mapped_column(ForeignKey("task.id"), index=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("task.id"), unique=True, index=True)
 
-    material: Mapped[str] = mapped_column(String(64))  # 中文名
-    material_en: Mapped[str] = mapped_column(String(64), default="")
-    confidence: Mapped[float] = mapped_column(Float, default=0.0)
-    evidence: Mapped[str] = mapped_column(Text, default="")
+    #: ai = 模型识别结果；user = 用户改过的卡片
+    source: Mapped[str] = mapped_column(String(8), default=MaterialSource.AI)
+    #: 品类（女装上衣 / 连衣裙），单独成列便于列表展示
     category: Mapped[str] = mapped_column(String(32), default="")
-    source: Mapped[str] = mapped_column(String(8), default=TagSource.AI)
-    rank: Mapped[int] = mapped_column(Integer, default=0)
+    #: 整张卡片（与 `card_normalize.to_payload` 对称）
+    payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    #: 用户自由文本补充，编译进生图提示词
+    note: Mapped[str] = mapped_column(Text, default="")
+    evidence: Mapped[str] = mapped_column(Text, default="")
+    overall_confidence: Mapped[float] = mapped_column(Float, default=0.0)
 
-    task: Mapped[Task] = relationship(back_populates="material_tags")
+    #: 材质小样（干净面料 patch）：生成阶段的保真锚点
+    swatch_url: Mapped[str] = mapped_column(Text, default="")
+    swatch_thumbnail_url: Mapped[str] = mapped_column(Text, default="")
+    swatch_storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 归一化裁剪框 [left, top, right, bottom]（实际使用的那一个）
+    swatch_crop_box: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    #: 纹理指纹（embedding）引用；MVP 期留空
+    texture_embedding_ref: Mapped[str] = mapped_column(String(128), default="")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    task: Mapped[Task] = relationship(back_populates="material_card")
 
 
 class MaterialImage(Base):
+    """面料参考图：按卡片检索得到的，以及用户在任务详情页上传的。"""
+
     __tablename__ = "material_image"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     task_id: Mapped[str] = mapped_column(ForeignKey("task.id"), index=True)
 
-    tag: Mapped[str] = mapped_column(String(64), index=True)
+    #: 展示 / 提示词用标签：检索结果 = 材质名，上传 = 「上传的面料图」
+    label: Mapped[str] = mapped_column(String(64), index=True)
     image_url: Mapped[str] = mapped_column(Text)
     thumbnail_url: Mapped[str] = mapped_column(Text)
     storage_key: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -133,6 +161,10 @@ class MaterialImage(Base):
     similarity: Mapped[float] = mapped_column(Float, default=0.0)
     selected: Mapped[bool] = mapped_column(Boolean, default=True)
     rank: Mapped[int] = mapped_column(Integer, default=0)
+    #: search = 按卡片检索；upload = 用户上传（重跑检索时不会被清掉）
+    origin: Mapped[str] = mapped_column(
+        String(16), default=MaterialImageOrigin.SEARCH, index=True
+    )
 
     task: Mapped[Task] = relationship(back_populates="material_images")
 
@@ -189,7 +221,7 @@ class IdentifyCache(Base):
     image_hash: Mapped[str] = mapped_column(String(64), index=True)
     model: Mapped[str] = mapped_column(String(64), index=True)
 
-    #: 序列化后的 tag 列表（MaterialTagResult 的字段子集）
+    #: 序列化后的材质卡片（与 card_normalize.to_payload 对称）
     payload: Mapped[list] = mapped_column(JSON, default=list)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     hits: Mapped[int] = mapped_column(Integer, default=0)

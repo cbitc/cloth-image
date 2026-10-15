@@ -12,19 +12,30 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
-from app.abilities.base import MaterialImageResult, MaterialTagResult, ReferenceImage
+from app.abilities.base import (
+    MaterialCardResult,
+    MaterialImageResult,
+    MaterialQuery,
+    ReferenceImage,
+)
+from app.abilities.material_identify.card_normalize import (
+    attach_swatch,
+    from_payload,
+    to_payload,
+)
+from app.abilities.prompting import build_material_summary
 from app.abilities.registry import get_abilities
 from app.config import get_settings
 from app.db.models import (
     ClothingImage,
     DesignImage,
+    MaterialCard,
     MaterialImage,
-    MaterialTag,
     Task,
     TaskEvent,
 )
 from app.db.session import SessionLocal
-from app.enums import TagSource, TaskStatus
+from app.enums import MaterialImageOrigin, MaterialSource, TaskStatus
 from app.storage import get_storage
 from app.tasks import cache
 from app.tasks.fetch import fetch_image_bytes, mirror_image
@@ -35,9 +46,12 @@ from app.tasks.state_machine import (
     can_transition,
     next_after_material_search,
 )
-from app.taxonomy import get_definition
+from app.taxonomy import match_material
 
 logger = logging.getLogger(__name__)
+
+#: 用户上传的面料图在池子里的标签（与检索结果的「材质名」区分开）
+UPLOAD_LABEL = "上传的面料图"
 
 
 def _now() -> datetime:
@@ -219,6 +233,162 @@ def _persist_generated_image(db: Session, task: Task, result) -> PersistedImage:
 
 
 # --------------------------------------------------------------------------- #
+# 材质卡片：读写 / 用户编辑 / 检索锚
+# --------------------------------------------------------------------------- #
+def _load_card(task: Task) -> MaterialCardResult | None:
+    """把任务的卡片行还原成 DTO（没有卡片时返回 None）。"""
+    row = task.material_card
+    return from_payload(row.payload) if row is not None else None
+
+
+def _card_brief(card: MaterialCardResult) -> str:
+    """一行摘要，用于任务事件文案。"""
+    region = card.primary
+    if region is None:
+        return "空卡片"
+    parts = [card.category or "未定品类"]
+    if region.color.dominant_hex:
+        parts.append(f"主色 {region.color.dominant_hex}")
+    if region.pattern.type:
+        parts.append(f"图案 {region.pattern.type}")
+    if region.optical.gloss:
+        parts.append(f"光泽 {region.optical.gloss}")
+    if region.fabric.material:
+        parts.append(f"面料 {region.fabric.material}")
+    return "｜".join(parts)
+
+
+def _save_card(
+    db: Session, task: Task, card: MaterialCardResult, *, source: MaterialSource
+) -> MaterialCard:
+    """把卡片写进任务（存在则更新，不新建）。
+
+    小样是真实图片：有字节就落盘并更新 URL / 裁剪框；没有字节（如用户只改属性）
+    就保留原有小样，不会因为编辑一次卡片就丢掉保真锚点。
+    """
+    row = task.material_card
+    if row is None:
+        row = MaterialCard(task_id=task.id)
+        task.material_card = row
+
+    row.source = str(source)
+    row.category = card.category
+    row.payload = to_payload(card)
+    row.note = card.note
+    row.evidence = card.evidence
+    row.overall_confidence = card.overall_confidence
+    row.texture_embedding_ref = card.texture_embedding_ref
+
+    region = card.primary
+    if region is not None and region.swatch_bytes:
+        persisted = persist_bytes(
+            "swatches", region.swatch_bytes, region.swatch_content_type
+        )
+        row.swatch_url = persisted.image_url
+        row.swatch_thumbnail_url = persisted.thumbnail_url
+        row.swatch_storage_key = persisted.storage_key
+        row.swatch_crop_box = (
+            list(region.swatch_crop_box) if region.swatch_crop_box else None
+        )
+
+    db.flush()
+    return row
+
+
+def material_queries(card: MaterialCardResult | None) -> list[MaterialQuery]:
+    """材质卡片 → 材质图检索锚（面料名为主锚，颜色 / 图案 / 光泽为增强）。
+
+    卡片没有面料名时返回空列表：宁可一张不搜，也不要拿「纯色 哑光」这类词
+    去搜出一堆泛泛的图片（MVP 期面料名由 VLM 从受控词表给出）。
+    """
+    if card is None:
+        return []
+
+    queries: list[MaterialQuery] = []
+    for rank, region in enumerate(card.regions):
+        material = (region.fabric.material or "").strip()
+        if not material:
+            continue
+        queries.append(
+            MaterialQuery(
+                material=material,
+                material_en=region.fabric.material_en,
+                color=region.color.dominant_name,
+                pattern=region.pattern.type,
+                gloss=region.optical.gloss,
+                rank=rank,
+            )
+        )
+    return queries
+
+
+def update_material_card(
+    db: Session,
+    task: Task,
+    patch: dict,
+    *,
+    source: MaterialSource = MaterialSource.USER,
+) -> MaterialCard:
+    """把用户编辑合并进卡片（局部更新：patch 里出现什么就改什么）。
+
+    `patch` 由 `MaterialCardUpdateRequest.model_dump(exclude_unset=True, exclude_none=True)`
+    生成，故「没传」与「显式传 null」都不会出现在这里；传空字符串则会生效（用于清空备注）。
+    """
+    card = _load_card(task)
+    if card is None:
+        raise ValueError("该任务还没有材质卡片")
+
+    region = card.primary
+
+    if patch.get("category") is not None:
+        card.category = str(patch["category"])
+    if patch.get("note") is not None:
+        card.note = str(patch["note"])
+    if patch.get("evidence") is not None:
+        card.evidence = str(patch["evidence"])
+
+    region_patch = patch.get("region") or {}
+    if region is not None:
+        for field in ("color", "pattern", "optical", "behavior"):
+            values = region_patch.get(field) or {}
+            target = getattr(region, field)
+            for key, value in values.items():
+                setattr(target, key, value)
+
+        fabric_patch = region_patch.get("fabric") or {}
+        if fabric_patch:
+            for key, value in fabric_patch.items():
+                setattr(region.fabric, key, value)
+            # 用户改了面料名：英文名 / 分类按受控词表补齐（未显式传时才覆盖）
+            if "material" in fabric_patch:
+                definition = match_material(
+                    region.fabric.material, region.fabric.material_en
+                )
+                if definition:
+                    if "material" in fabric_patch:
+                        region.fabric.material = definition["material"]
+                    if "material_en" not in fabric_patch:
+                        region.fabric.material_en = definition.get("material_en", "")
+                    if "category" not in fabric_patch:
+                        region.fabric.category = definition.get("category", "")
+
+    row = _save_card(db, task, card, source=source)
+    _emit(db, task, "identify", "已更新材质卡片")
+    db.commit()
+    return row
+
+
+def mark_card_confirmed(db: Session, task: Task) -> None:
+    """检查点 1 完成：卡片来源标为 user（人工确认过），并记事件。"""
+    row = task.material_card
+    if row is not None:
+        row.source = str(MaterialSource.USER)
+        row.updated_at = _now()
+    _emit(db, task, "identify", "已确认材质卡片，开始检索面料图")
+    db.commit()
+
+
+# --------------------------------------------------------------------------- #
 # 阶段 1：识别材质
 # --------------------------------------------------------------------------- #
 def run_identify(task_id: str) -> None:
@@ -240,14 +410,17 @@ def run_identify(task_id: str) -> None:
             image_bytes, content_type = _load_source_image(db, task, clothing)
             image_hash = clothing.image_hash or _hash_bytes(image_bytes)
 
-            tags: list[MaterialTagResult] = []
+            card: MaterialCardResult | None = None
             saved_tokens = 0
-            cache_hit = False
             if settings.identify_cache_enabled and image_hash:
-                tags, saved_tokens = cache.lookup(db, image_hash, model_name)
-                cache_hit = bool(tags)
+                card, saved_tokens = cache.lookup(db, image_hash, model_name)
 
+            cache_hit = card is not None
             if cache_hit:
+                # 缓存只存语义部分：小样按缓存里的裁剪框从原图重裁（比存图便宜）
+                attach_swatch(
+                    card, image_bytes, max_side=settings.identify_swatch_max_side
+                )
                 _emit(
                     db,
                     task,
@@ -256,50 +429,32 @@ def run_identify(task_id: str) -> None:
                     % (model_name, saved_tokens),
                 )
             else:
-                tags = identifier.identify(
+                card = identifier.identify(
                     image_bytes=image_bytes,
                     content_type=content_type,
                     image_url=clothing.image_url,
                     context_title=clothing.title,
                 )
-                if settings.identify_cache_enabled and image_hash and tags:
+                if settings.identify_cache_enabled and image_hash and card.regions:
                     usage = getattr(identifier, "last_usage", None) or {}
                     cache.store(
                         db,
                         image_hash,
                         model_name,
-                        tags,
+                        card,
                         int(usage.get("total_tokens") or 0),
                     )
 
-            for old in list(task.material_tags):
-                db.delete(old)
-            db.flush()
-
-            for index, tag in enumerate(tags):
-                definition = get_definition(tag.material) or {}
-                db.add(
-                    MaterialTag(
-                        task_id=task.id,
-                        material=tag.material,
-                        material_en=tag.material_en
-                        or definition.get("material_en", ""),
-                        confidence=tag.confidence,
-                        evidence=tag.evidence,
-                        category=tag.category or definition.get("category", ""),
-                        source=str(TagSource.AI),
-                        rank=tag.rank or index,
-                    )
-                )
+            _save_card(db, task, card, source=MaterialSource.AI)
 
             _set_status(db, task, TaskStatus.AWAIT_MATERIAL_CONFIRM)
             _emit(
                 db,
                 task,
                 "identify",
-                "识别出 %d 个材质候选，等待人工确认%s"
+                "识别完成：%s，等待人工确认%s"
                 % (
-                    len(tags),
+                    _card_brief(card),
                     ""
                     if cache_hit
                     else _usage_suffix(
@@ -325,26 +480,28 @@ def run_material_search(task_id: str, *, cascade: bool = True) -> None:
             return
         try:
             _set_status(db, task, TaskStatus.MATERIAL_SEARCH)
-            _emit(db, task, "material_search", "按材质 tag 检索面料图…")
+            _emit(db, task, "material_search", "按卡片里的面料名检索面料图…")
             db.commit()
 
             abilities = get_abilities()
-            tags = [
-                MaterialTagResult(
-                    material=t.material,
-                    material_en=t.material_en,
-                    confidence=t.confidence,
-                    evidence=t.evidence,
-                    category=t.category,
-                    rank=t.rank,
+            queries = material_queries(_load_card(task))
+            if not queries:
+                _emit(
+                    db,
+                    task,
+                    "material_search",
+                    "材质卡片缺少面料名，已跳过面料图检索（可在卡片里补充面料后重试）",
                 )
-                for t in task.material_tags
-            ]
             results = abilities.material_search.search(
-                tags, per_tag=settings.material_images_per_tag
+                queries, per_tag=settings.material_images_per_tag
             )
 
+            # 只清「检索来的」：用户上传的面料图必须保留（重跑检索不该丢掉用户输入）
+            kept = 0
             for old in list(task.material_images):
+                if old.origin == str(MaterialImageOrigin.UPLOAD):
+                    kept += 1
+                    continue
                 db.delete(old)
             db.flush()
 
@@ -358,7 +515,7 @@ def run_material_search(task_id: str, *, cascade: bool = True) -> None:
                 db.add(
                     MaterialImage(
                         task_id=task.id,
-                        tag=result.tag,
+                        label=result.label,
                         image_url=persisted.image_url,
                         thumbnail_url=persisted.thumbnail_url,
                         storage_key=persisted.storage_key,
@@ -366,6 +523,7 @@ def run_material_search(task_id: str, *, cascade: bool = True) -> None:
                         similarity=result.similarity,
                         selected=True,
                         rank=result.rank,
+                        origin=str(MaterialImageOrigin.SEARCH),
                     )
                 )
 
@@ -375,7 +533,13 @@ def run_material_search(task_id: str, *, cascade: bool = True) -> None:
                 has_idea=bool((task.design_idea or "").strip()),
             )
             _set_status(db, task, target)
-            _emit(db, task, "material_search", f"检索到 {len(results)} 张面料图")
+            _emit(
+                db,
+                task,
+                "material_search",
+                "检索到 %d 张面料图%s"
+                % (len(results), f"，另有 {kept} 张用户上传图" if kept else ""),
+            )
             db.commit()
             goto_generate = target == TaskStatus.GENERATING
         except Exception as exc:  # noqa: BLE001
@@ -424,14 +588,14 @@ def run_generate(
             selected = [m for m in task.material_images if m.selected]
             material_images = [
                 MaterialImageResult(
-                    tag=m.tag,
+                    label=m.label,
                     similarity=m.similarity,
                     content_type="image/png",
                     # 带上字节：外部生图服务访问不到我们的 localhost /media 地址；
                     # 外链型 provider（如 Unsplash）没有本地字节 → 按需下载补齐，
                     # 否则只吃字节的生图实现（ComfyUI）会把这些参考图丢掉。
                     image_bytes=_load_reference_bytes(
-                        db, task, m.storage_key, m.image_url, f"材质图({m.tag})"
+                        db, task, m.storage_key, m.image_url, f"材质图({m.label})"
                     ),
                     external_url=m.image_url,
                     rank=m.rank,
@@ -467,11 +631,13 @@ def run_generate(
                     "没有任何可用参考图（未参考原图，材质图也无本地字节），本次退化为纯文生图",
                 )
 
+            card = _load_card(task)
             results = abilities.design_generator.generate(
                 material_images,
                 task.design_idea or "",
                 reference,
                 num_candidates,
+                material_summary=build_material_summary(card) if card else "",
             )
 
             # provider 自报被丢弃的参考图（无字节 / 超上限 / 本机地址）→ 让用户看得见

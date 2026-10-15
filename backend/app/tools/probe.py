@@ -24,8 +24,10 @@ from typing import Any
 
 from app.ability_config import get_ability_settings
 from app.abilities.base import ReferenceImage
+from app.abilities.prompting import build_material_summary
 from app.abilities.registry import config_warnings, get_abilities
 from app.config import get_settings
+from app.tasks.orchestrator import material_queries
 
 
 def _load_probe_image(path: str | None) -> bytes:
@@ -45,6 +47,44 @@ def _dump_usage(label: str, usage: Any) -> None:
         print(f"  {label} usage: <无>")
         return
     print(f"  {label} usage: {json.dumps(usage, ensure_ascii=False)}")
+
+
+def _print_card(card: Any) -> None:
+    """打印材质卡片（识别结果），供真机联调时肉眼看质量。"""
+    if card is None or not card.regions:
+        print("  [提醒] 未识别出任何材质区域")
+        return
+
+    print(f"  品类: {card.category or '<未定>'}")
+    for region in card.regions:
+        color = region.color
+        print(
+            f"  - [{region.region_type}] 主色 {color.dominant_name or '<未命名>'}"
+            f" {color.dominant_hex}  图案 {region.pattern.type}"
+            f"  光泽 {region.optical.gloss} / {region.optical.transparency}"
+            f"  面料 {region.fabric.material or '<未定>'}（{region.fabric.category}）"
+        )
+        if color.palette:
+            palette = "，".join(
+                f"{item.get('hex')} {round(float(item.get('ratio', 0)) * 100)}%"
+                for item in color.palette
+                if isinstance(item, dict)
+            )
+            print(f"      色板: {palette}")
+        print(
+            f"      置信度: 颜色 {region.confidence.color:.0%}"
+            f" / 图案 {region.confidence.pattern:.0%}"
+            f" / 光泽 {region.confidence.gloss:.0%}"
+        )
+        swatch = region.swatch_bytes
+        print(f"      小样: {len(swatch)} bytes" if swatch else "      小样: <无>")
+        if region.swatch_crop_box:
+            print(f"      裁剪框: {region.swatch_crop_box}")
+        if card.evidence:
+            print(f"      依据: {card.evidence}")
+    summary = build_material_summary(card)
+    if summary:
+        print(f"  编译给生图的材质要求: {summary}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -100,27 +140,19 @@ def main(argv: list[str] | None = None) -> int:
     image = _load_probe_image(args.image)
     print(f"\n输入图: {len(image)} bytes\n")
 
-    tags: list[Any] = []
+    card: Any = None
 
     if not args.skip_identify:
         print(f"[1/2] 材质识别 · provider={abilities.providers['material_identifier']}")
         try:
-            tags = abilities.material_identifier.identify(
+            card = abilities.material_identifier.identify(
                 image, "image/png", context_title="探针输入图"
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  [失败] {type(exc).__name__}: {exc}")
             return 1
 
-        if not tags:
-            print("  [提醒] 未识别出任何材质")
-        for tag in tags:
-            print(
-                f"  - {tag.material} / {tag.material_en}  {tag.confidence:.0%}"
-                f"  [{tag.category}]"
-            )
-            if tag.evidence:
-                print(f"      {tag.evidence}")
+        _print_card(card)
         _dump_usage("识别", getattr(abilities.material_identifier, "last_usage", None))
         print()
 
@@ -128,14 +160,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[2/2] 生图 · provider={abilities.providers['design_generator']}")
         try:
             # 未识别出材质（如 --skip-identify）时不必去查面料图，直接文生图/参考图生图
+            queries = material_queries(card) if card else []
             materials = (
-                abilities.material_search.search(tags, per_tag=1) if tags else []
+                abilities.material_search.search(queries, per_tag=1) if queries else []
             )
             results = abilities.design_generator.generate(
                 materials,
                 "改成收腰版型，裙摆加长到脚踝，保留原立领",
                 ReferenceImage(image_bytes=image, caption="探针输入图"),
                 num_candidates=1,
+                material_summary=build_material_summary(card) if card else "",
             )
         except Exception as exc:  # noqa: BLE001
             print(f"  [失败] {type(exc).__name__}: {exc}")

@@ -45,9 +45,11 @@ def _png(color: tuple[int, int, int] = (200, 60, 60), size: int = 96) -> bytes:
 
 
 def _material(
-    tag: str, similarity: float = 0.5, color=(10, 20, 30)
+    label: str, similarity: float = 0.5, color=(10, 20, 30)
 ) -> MaterialImageResult:
-    return MaterialImageResult(tag=tag, similarity=similarity, image_bytes=_png(color))
+    return MaterialImageResult(
+        label=label, similarity=similarity, image_bytes=_png(color)
+    )
 
 
 def _custom_workflow_json() -> str:
@@ -281,8 +283,8 @@ def test_identical_reference_bytes_are_uploaded_once() -> None:
 
     generator.generate(
         [
-            MaterialImageResult(tag="棉", similarity=0.9, image_bytes=same),
-            MaterialImageResult(tag="丝", similarity=0.8, image_bytes=same),
+            MaterialImageResult(label="棉", similarity=0.9, image_bytes=same),
+            MaterialImageResult(label="丝", similarity=0.8, image_bytes=same),
         ],
         _DESIGN_IDEA,
         num_candidates=1,
@@ -299,7 +301,7 @@ def test_refs_without_bytes_are_reported_not_silently_dropped() -> None:
     generator.generate(
         [
             MaterialImageResult(
-                tag="桑蚕丝",
+                label="桑蚕丝",
                 similarity=0.9,
                 external_url="https://images.unsplash.com/photo-1?w=1080",
             )
@@ -324,7 +326,7 @@ def test_skipped_refs_are_cleared_between_generate_calls() -> None:
     generator = _generator(handler)
 
     generator.generate(
-        [MaterialImageResult(tag="棉", external_url="https://cdn.example.com/a.jpg")],
+        [MaterialImageResult(label="棉", external_url="https://cdn.example.com/a.jpg")],
         _DESIGN_IDEA,
         num_candidates=1,
     )
@@ -364,11 +366,9 @@ def test_prompt_reference_numbering_matches_actual_refs() -> None:
     graph = state["graphs"][0]["prompt"]
     prompt = graph["10"]["inputs"]["prompt"]
 
-    assert "参考图2~3 = 识别出的材质图。" in prompt
+    assert "参考图2~3 = 面料质感参考图。" in prompt
     assert "参考图2~7" not in prompt
-    # 材质清单只含真正入选的两张
-    assert "材质0、材质1" in prompt
-    assert "材质2" not in prompt
+    assert "参考图4" not in prompt  # 未被送出的参考图不能被声称
 
     # 图里也只有原服装图 + 2 张材质图（node 20/21/22）
     assert graph["22"]["class_type"] == "LoadImage"
@@ -388,7 +388,7 @@ def test_material_only_mode_numbers_refs_from_one() -> None:
     graph = state["graphs"][0]["prompt"]
     prompt = graph["10"]["inputs"]["prompt"]
     assert "原服装图" not in prompt
-    assert "参考图1~2 = 识别出的材质图。" in prompt
+    assert "参考图1~2 = 面料质感参考图。" in prompt
     # 只上传两张材质图（没有原图占位）
     assert len(state["uploads"]) == 2
     assert graph["10"]["inputs"]["image1"] == ["20", 0]
@@ -411,24 +411,25 @@ def test_used_reference_flag_tracks_the_original_image() -> None:
 
 
 def test_prompt_does_not_claim_material_ref_without_bytes() -> None:
-    """材质图无字节被丢弃时，prompt 不能声称有「参考图2」，但材质名仍作为文字要求保留。"""
+    """材质图无字节被丢弃时，prompt 不能声称有「参考图2」，但材质要求仍作为文字保留。"""
     handler, state = _server()
     generator = _generator(handler)
 
     generator.generate(
         [
             MaterialImageResult(
-                tag="桑蚕丝", external_url="https://cdn.example.com/a.jpg"
+                label="桑蚕丝", external_url="https://cdn.example.com/a.jpg"
             )
         ],
         _DESIGN_IDEA,
         ReferenceImage(image_bytes=_png()),
         num_candidates=1,
+        material_summary="面料 桑蚕丝；图案 纯色",
     )
 
     prompt = state["graphs"][0]["prompt"]["10"]["inputs"]["prompt"]
     assert "参考图2" not in prompt
-    assert "面料使用「桑蚕丝」材质。" in prompt
+    assert "面料 桑蚕丝" in prompt
 
 
 def test_prompt_without_any_reference_has_no_reference_legend() -> None:
@@ -439,7 +440,7 @@ def test_prompt_without_any_reference_has_no_reference_legend() -> None:
 
     prompt = state["graphs"][0]["prompt"]["10"]["inputs"]["prompt"]
     assert "参考图" not in prompt
-    assert "面料使用「未指定」材质。" in prompt
+    assert "面料保持与原图一致的质感。" in prompt
 
 
 def test_without_any_reference_falls_back_to_empty_latent() -> None:

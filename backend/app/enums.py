@@ -10,7 +10,7 @@ class TaskStatus(StrEnum):
 
     PENDING = "PENDING"
     IDENTIFYING = "IDENTIFYING"
-    # 人工检查点 1：确认 / 修改材质 tag
+    # 人工检查点 1：确认 / 编辑材质卡片
     AWAIT_MATERIAL_CONFIRM = "AWAIT_MATERIAL_CONFIRM"
     MATERIAL_SEARCH = "MATERIAL_SEARCH"
     # 人工检查点 2（可选）：挑选 / 更换材质图
@@ -37,6 +37,15 @@ TERMINAL_STATUSES: frozenset[TaskStatus] = frozenset(
 )
 
 
-class TagSource(StrEnum):
+class MaterialSource(StrEnum):
+    """材质卡片的来源：AI 识别 or 用户人工确认过的编辑结果。"""
+
     AI = "ai"
     USER = "user"
+
+
+class MaterialImageOrigin(StrEnum):
+    """面料参考图来源：按卡片检索得到 or 用户在任务详情页上传。"""
+
+    SEARCH = "search"
+    UPLOAD = "upload"

@@ -14,23 +14,13 @@ import io
 import pytest
 from PIL import Image
 
-from app.abilities.base import DesignImageResult, MaterialImageResult
+from app.abilities.base import DesignImageResult, MaterialImageResult, MaterialQuery
 from app.abilities.registry import register_provider, reset_abilities_cache
 from app.config import apply_overrides
 from app.enums import TaskStatus
 from app.tasks import orchestrator
 
 DESIGN_IDEA = "改成收腰版型，裙摆加长到脚踝"
-
-_TAGS = [
-    {
-        "material": "桑蚕丝",
-        "material_en": "Mulberry Silk",
-        "confidence": 0.9,
-        "evidence": "用户确认：强光泽、细腻垂坠",
-        "category": "天然纤维",
-    }
-]
 
 
 def _png(color: tuple[int, int, int] = (20, 120, 200), size: int = 32) -> bytes:
@@ -48,18 +38,20 @@ class _ExternalMaterialSearch:
     name = "external"
     sites = [{"id": "external", "label": "外部图库（仅外链）"}]
 
-    def search(self, tags: list, per_tag: int = 3) -> list[MaterialImageResult]:
+    def search(
+        self, queries: list[MaterialQuery], per_tag: int = 3
+    ) -> list[MaterialImageResult]:
         results: list[MaterialImageResult] = []
         rank = 0
-        for tag in tags:
+        for query in queries:
             for index in range(per_tag):
                 results.append(
                     MaterialImageResult(
-                        tag=tag.material,
+                        label=query.material,
                         similarity=round(0.9 - 0.05 * index, 2),
                         content_type="image/jpeg",
                         external_url=(
-                            f"https://cdn.example.com/{tag.material}/{index}.jpg"
+                            f"https://cdn.example.com/{query.material}/{index}.jpg"
                         ),
                         source_url="https://cdn.example.com/photo/1",
                         rank=rank,
@@ -79,11 +71,16 @@ class _RecordingGenerator:
         self.last_skipped_refs: list[str] = []
 
     def generate(
-        self, material_images, design_idea, reference=None, num_candidates=3
+        self,
+        material_images,
+        design_idea,
+        reference=None,
+        num_candidates=3,
+        material_summary="",
     ) -> list[DesignImageResult]:
         self.material_images = list(material_images)
         self.last_skipped_refs = [
-            f"材质图({image.tag})（测试注入：无字节，已丢弃）"
+            f"材质图({image.label})（测试注入：无字节，已丢弃）"
             for image in material_images
             if not image.image_bytes
         ]
@@ -142,7 +139,7 @@ def _run_pipeline(client, clothing_image_id: str) -> str:
     assert resp.status_code == 201, resp.text
     task_id = resp.json()["tasks"][0]["id"]
 
-    resp = client.post(f"/api/tasks/{task_id}/confirm-materials", json={"tags": _TAGS})
+    resp = client.post(f"/api/tasks/{task_id}/confirm-materials")
     assert resp.status_code == 200, resp.text
 
     resp = client.post(
@@ -218,6 +215,8 @@ def test_dropped_refs_surface_as_task_event(
     # 参考图丢失不应让任务失败
     assert detail["status"] == TaskStatus.DONE
 
+    # 面料名来自 fake 识别器（随图片哈希变化），所以从卡片里取而不是写死
+    material = detail["material_card"]["regions"][0]["fabric"]["material"]
     messages = [event["message"] for event in detail["events"]]
     assert any("未生效" in message for message in messages), messages
-    assert any("桑蚕丝" in message for message in messages), messages
+    assert any(material in message for message in messages), messages

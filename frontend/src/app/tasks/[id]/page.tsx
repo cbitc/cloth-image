@@ -5,14 +5,14 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PipelineSteps, StatusBadge } from "@/components/Pipeline";
+import { MaterialCardEditor } from "@/components/MaterialCardEditor";
 import { ResultGallery } from "@/components/ResultGallery";
 import { SelectableImageGrid } from "@/components/SelectableImageGrid";
-import { TagEditor } from "@/components/TagEditor";
 import { Button, Card, EmptyState, ErrorText, SectionTitle, Spinner } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useTaskEvents } from "@/lib/hooks";
 import { formatTime, isTerminal } from "@/lib/taskStatus";
-import type { MaterialTagDef, MaterialTagInput, TaskDetail } from "@/lib/types";
+import type { CardOptions, MaterialCardPatch, TaskDetail } from "@/lib/types";
 
 export default function TaskDetailPage() {
   const params = useParams<{ id: string }>();
@@ -20,8 +20,8 @@ export default function TaskDetailPage() {
 
   const [reloadKey, setReloadKey] = useState(0);
   const { task, events, setTask } = useTaskEvents(id, null, reloadKey);
-  const [taxonomy, setTaxonomy] = useState<MaterialTagDef[]>([]);
-  const [draftTags, setDraftTags] = useState<MaterialTagInput[]>([]);
+  const [cardOptions, setCardOptions] = useState<CardOptions | null>(null);
+  const [cardPatch, setCardPatch] = useState<MaterialCardPatch>({});
   const [selectedMaterials, setSelectedMaterials] = useState<Set<string>>(new Set());
   const [designIdea, setDesignIdea] = useState("");
   const [numCandidates, setNumCandidates] = useState(3);
@@ -30,13 +30,13 @@ export default function TaskDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const tagSignature = useRef("");
+  const cardSignature = useRef("");
   const materialSignature = useRef("");
   const ideaSignature = useRef("");
   const useRefSignature = useRef<boolean | null>(null);
 
   useEffect(() => {
-    api.taxonomy().then(setTaxonomy).catch(() => undefined);
+    api.cardOptions().then(setCardOptions).catch(() => undefined);
   }, []);
 
   const load = useCallback(async () => {
@@ -55,21 +55,14 @@ export default function TaskDetailPage() {
     if (id) void load();
   }, [id, load]);
 
-  // 后端 tag 变化时同步草稿（用户编辑过程中不会被覆盖）
+  // 服务端卡片变化（或用户点了「修改卡片」）时清空本地草稿
   useEffect(() => {
     if (!task) return;
-    const signature = task.material_tags.map((tag) => `${tag.id}:${tag.material}`).join("|");
-    if (signature !== tagSignature.current) {
-      tagSignature.current = signature;
-      setDraftTags(
-        task.material_tags.map((tag) => ({
-          material: tag.material,
-          material_en: tag.material_en,
-          confidence: tag.confidence,
-          evidence: tag.evidence,
-          category: tag.category,
-        })),
-      );
+    const card = task.material_card;
+    const signature = card ? `${card.id}:${card.source}:${card.updated_at}` : "";
+    if (signature !== cardSignature.current) {
+      cardSignature.current = signature;
+      setCardPatch({});
     }
   }, [task]);
 
@@ -155,6 +148,14 @@ export default function TaskDetailPage() {
     task.status === "AWAIT_DESIGN_IDEA" ||
     task.status === "AWAIT_MATERIAL_SELECT" ||
     task.status === "DONE";
+  const canEditCard = [
+    "AWAIT_MATERIAL_CONFIRM",
+    "AWAIT_MATERIAL_SELECT",
+    "AWAIT_DESIGN_IDEA",
+    "DONE",
+  ].includes(task.status);
+  const card = task.material_card;
+  const region = card?.regions[0] ?? null;
   const inFlight = ["IDENTIFYING", "MATERIAL_SEARCH", "GENERATING", "PENDING"].includes(
     task.status,
   );
@@ -270,74 +271,149 @@ export default function TaskDetailPage() {
                   <Spinner /> 正在识别服装材质…
                 </span>
               </EmptyState>
-            ) : draftTags.length === 0 ? (
-              <EmptyState>暂无材质标签</EmptyState>
+            ) : !task.material_card ? (
+              <EmptyState>暂无材质卡片</EmptyState>
             ) : canConfirm ? (
-              <>
-                <TagEditor tags={draftTags} taxonomy={taxonomy} onChange={setDraftTags} />
-                <Button
-                  className="mt-4 w-full"
-                  disabled={busy || draftTags.every((tag) => !tag.material.trim())}
-                  onClick={() =>
-                    run(() =>
-                      api.confirmMaterials(
-                        task.id,
-                        draftTags.filter((tag) => tag.material.trim()),
-                      ),
-                    )
-                  }
-                >
-                  {busy ? <Spinner /> : null}
-                  确认材质并检索面料图
-                </Button>
-              </>
-            ) : (
-              <div className="space-y-2">
-                {task.material_tags.map((tag, index) => (
-                  <div
-                    key={tag.id}
-                    className="rounded-xl border border-white/10 bg-white/[0.03] p-3"
+              cardOptions ? (
+                <>
+                  <MaterialCardEditor
+                    card={task.material_card}
+                    options={cardOptions}
+                    patch={cardPatch}
+                    onPatchChange={setCardPatch}
+                  />
+                  <Button
+                    className="mt-4 w-full"
+                    disabled={busy}
+                    onClick={() =>
+                      run(async () => {
+                        // 先落盘编辑，再确认 → 检索面料图（两步都是幂等的部分更新）
+                        if (Object.keys(cardPatch).length) {
+                          await api.updateMaterialCard(task.id, cardPatch);
+                        }
+                        return api.confirmMaterials(task.id);
+                      })
+                    }
                   >
-                    <div className="flex items-center gap-3">
-                      <span className="grid h-6 w-6 place-items-center rounded-md bg-sky-500/15 text-[11px] font-bold text-sky-300">
-                        {index + 1}
+                    {busy ? <Spinner /> : null}
+                    确认材质并检索面料图
+                  </Button>
+                </>
+              ) : (
+                <EmptyState>
+                  <span className="flex items-center gap-2">
+                    <Spinner /> 加载字段选项…
+                  </span>
+                </EmptyState>
+              )
+            ) : (
+              <div className="space-y-3">
+                <dl className="grid gap-x-4 gap-y-2 text-[11px] sm:grid-cols-2">
+                  {card && region ? (
+                    <>
+                      <div className="flex gap-2">
+                        <dt className="text-slate-500">品类</dt>
+                        <dd className="text-slate-200">{card.category || "—"}</dd>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <dt className="text-slate-500">主色</dt>
+                        <dd className="flex items-center gap-1.5 text-slate-200">
+                          <i
+                            className="inline-block h-3 w-3 rounded-sm border border-white/20"
+                            style={{ backgroundColor: region.color.dominant_hex }}
+                          />
+                          {region.color.dominant_name || "—"}
+                          <span className="text-slate-500">{region.color.dominant_hex}</span>
+                        </dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="text-slate-500">图案</dt>
+                        <dd className="text-slate-200">
+                          {region.pattern.type}
+                          {region.pattern.scale ? ` · ${region.pattern.scale}` : ""}
+                          {region.pattern.direction ? ` · ${region.pattern.direction}` : ""}
+                        </dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="text-slate-500">光泽</dt>
+                        <dd className="text-slate-200">
+                          {region.optical.gloss} / {region.optical.transparency}
+                        </dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="text-slate-500">面料</dt>
+                        <dd className="text-slate-200">
+                          {region.fabric.material || "—"}
+                          {region.fabric.category ? `（${region.fabric.category}）` : ""}
+                        </dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="text-slate-500">手感</dt>
+                        <dd className="text-slate-200">
+                          {region.behavior.weight} / {region.behavior.drape}
+                          {region.behavior.is_default ? (
+                            <span className="ml-1 text-[10px] text-slate-500">默认值</span>
+                          ) : null}
+                        </dd>
+                      </div>
+                    </>
+                  ) : null}
+                </dl>
+
+                {region?.color.palette.length ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] text-slate-400">色板</span>
+                    {region.color.palette.map((entry, index) => (
+                      <span
+                        key={`${entry.hex}-${index}`}
+                        className="flex items-center gap-1 rounded-md bg-white/5 px-2 py-0.5 text-[10px] text-slate-300"
+                      >
+                        <i
+                          className="inline-block h-3 w-3 rounded-sm border border-white/20"
+                          style={{ backgroundColor: entry.hex }}
+                        />
+                        {entry.hex} · {Math.round((entry.ratio ?? 0) * 100)}%
                       </span>
-                      <span className="text-sm font-medium text-slate-100">{tag.material}</span>
-                      <span className="text-[11px] text-slate-500">{tag.material_en}</span>
-                      <span className="ml-auto text-xs font-medium text-sky-300">
-                        {Math.round(tag.confidence * 100)}%
-                      </span>
-                    </div>
-                    <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
-                      {tag.evidence}
-                    </p>
-                    {tag.category ? (
-                      <span className="mt-2 inline-block rounded-md bg-white/5 px-2 py-0.5 text-[10px] text-slate-400">
-                        {tag.category} · {tag.source === "user" ? "人工确认" : "AI 识别"}
-                      </span>
-                    ) : null}
+                    ))}
                   </div>
-                ))}
-                {task.status === "DONE" || canGenerate ? (
+                ) : null}
+
+                {card?.swatch.url || card?.swatch.thumbnail_url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={card?.swatch.thumbnail_url || card?.swatch.url}
+                    alt="材质小样"
+                    className="h-20 w-20 rounded-xl border border-white/10 object-cover"
+                  />
+                ) : null}
+
+                {card?.note ? (
+                  <p className="text-[11px] text-slate-300">补充说明：{card.note}</p>
+                ) : null}
+
+                {card?.evidence ? (
+                  <p className="text-[11px] leading-relaxed text-slate-400">
+                    判断依据：{card.evidence}
+                  </p>
+                ) : null}
+
+                <span className="inline-block rounded-md bg-white/5 px-2 py-0.5 text-[10px] text-slate-400">
+                  {card?.source === "user" ? "人工确认" : "AI 识别"}
+                  {card ? ` · 总体置信度 ${Math.round(card.overall_confidence * 100)}%` : ""}
+                </span>
+
+                {canEditCard ? (
                   <Button
                     variant="outline"
-                    className="mt-2 w-full"
+                    className="w-full"
                     disabled={busy}
                     onClick={() => {
-                      tagSignature.current = "";
-                      setDraftTags(
-                        task.material_tags.map((tag) => ({
-                          material: tag.material,
-                          material_en: tag.material_en,
-                          confidence: tag.confidence,
-                          evidence: tag.evidence,
-                          category: tag.category,
-                        })),
-                      );
+                      cardSignature.current = "";
+                      setCardPatch({});
                       setTask({ ...task, status: "AWAIT_MATERIAL_CONFIRM" });
                     }}
                   >
-                    修改材质标签（重跑后续步骤）
+                    修改材质卡片（重跑后续步骤）
                   </Button>
                 ) : null}
               </div>
@@ -366,7 +442,7 @@ export default function TaskDetailPage() {
             ) : null}
 
             {task.material_images.length === 0 && !inFlight ? (
-              <EmptyState>确认材质后，将按 tag 检索面料特写图</EmptyState>
+              <EmptyState>确认材质后，将按卡片里的面料名检索面料特写图</EmptyState>
             ) : task.material_images.length > 0 ? (
               <>
                 <SelectableImageGrid
@@ -374,8 +450,11 @@ export default function TaskDetailPage() {
                     id: image.id,
                     thumbnail_url: image.thumbnail_url,
                     image_url: image.image_url,
-                    caption: image.tag,
-                    meta: `相似度 ${(image.similarity * 100).toFixed(0)}%`,
+                    caption: image.label,
+                    meta:
+                      image.origin === "upload"
+                        ? "用户上传"
+                        : `相似度 ${(image.similarity * 100).toFixed(0)}%`,
                     badge: image.selected ? "已选" : undefined,
                   }))}
                   selectedIds={selectedMaterials}
@@ -392,6 +471,7 @@ export default function TaskDetailPage() {
                   }
                   columns="grid-cols-3 lg:grid-cols-5"
                 />
+
                 {canSelect ? (
                   <Button
                     className="mt-4"
@@ -406,6 +486,25 @@ export default function TaskDetailPage() {
                 ) : null}
               </>
             ) : null}
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <label className="text-[11px] text-slate-400">
+                上传面料图（编辑入口 2「换小样」）：
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  disabled={busy || !canEditCard}
+                  onChange={(event) => {
+                    const files = event.target.files;
+                    if (!files || !files.length) return;
+                    void run(() => api.uploadMaterialImages(task.id, files));
+                    event.target.value = "";
+                  }}
+                  className="ml-2 text-[11px] text-slate-300 file:mr-2 file:rounded-md file:border-0 file:bg-sky-500/15 file:px-2 file:py-1 file:text-[11px] file:text-sky-300"
+                />
+              </label>
+            </div>
           </Card>
 
           <Card>

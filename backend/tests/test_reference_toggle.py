@@ -25,16 +25,6 @@ from app.enums import TaskStatus
 
 DESIGN_IDEA = "改成收腰版型，裙摆加长到脚踝"
 
-_TAGS = [
-    {
-        "material": "桑蚕丝",
-        "material_en": "Mulberry Silk",
-        "confidence": 0.9,
-        "evidence": "用户确认：强光泽、细腻垂坠",
-        "category": "天然纤维",
-    }
-]
-
 
 def _png(color: tuple[int, int, int] = (20, 120, 200), size: int = 32) -> bytes:
     buffer = io.BytesIO()
@@ -52,13 +42,17 @@ class _RecordingDesignGenerator:
         self.last_skipped_refs: list[str] = []
 
     def generate(
-        self, material_images, design_idea, reference=None, num_candidates=3
+        self,
+        material_images,
+        design_idea,
+        reference=None,
+        num_candidates=3,
+        material_summary="",
     ) -> list[DesignImageResult]:
         self.references.append(reference)
-        tags = sorted({image.tag for image in material_images if image.tag})
         # 与真实 provider 同源的组装逻辑：has_reference 决定「参考图1」是谁
         prompt = build_design_prompt(
-            material_tags=tags,
+            material_summary=material_summary,
             material_images_count=len(material_images),
             design_idea=design_idea,
             has_reference=reference is not None,
@@ -129,7 +123,7 @@ def _task_ready_to_generate(
     assert resp.status_code == 201, resp.text
     task_id = resp.json()["tasks"][0]["id"]
 
-    resp = client.post(f"/api/tasks/{task_id}/confirm-materials", json={"tags": _TAGS})
+    resp = client.post(f"/api/tasks/{task_id}/confirm-materials")
     assert resp.status_code == 200, resp.text
     detail = client.get(f"/api/tasks/{task_id}").json()
     if not require_material_selection:
@@ -197,7 +191,7 @@ def test_disabling_reference_drops_original_image(
     # 材质图编号从 1 开始（原图不占 1 号位）
     first_line = prompt.splitlines()[0]
     assert first_line.startswith("参考图1")
-    assert "识别出的材质图" in first_line
+    assert "面料质感参考图" in first_line
     assert [image["used_reference"] for image in detail["design_images"]] == [False]
 
     assert any("不参考原服装图" in message for message in _messages(detail))

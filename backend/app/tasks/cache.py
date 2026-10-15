@@ -1,11 +1,14 @@
-"""材质识别结果缓存。
+"""材质卡片识别结果缓存。
 
-同一张图 + 同一个模型 → 直接复用上次结果，省掉一次 VLM 调用
+同一张图 + 同一个模型 → 直接复用上次识别出的材质卡片，省掉一次 VLM 调用
 （实测单次识别约 1500 tokens，重复建任务是常见操作）。
 
 设计要点：
 - key = (图片内容 sha256, 模型名)。模型名参与 key，换模型后旧缓存自然失效，
   不会拿 qwen3-vl-plus 的结果冒充别的模型。
+- 只缓存卡片的**语义部分**（含各区域的裁剪框）；swatch 字节不缓存，
+  命中后由编排器拿原图按框重裁（比存图便宜，也避免去重逻辑重复），
+  故缓存对「同一张图」才有意义。
 - 只有拿到图片字节、算得出哈希时才缓存（外链图未下载时无法缓存）。
 - 缓存读写都失败不应影响主流程（识别本身能跑就行）。
 """
@@ -19,7 +22,11 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.abilities.base import MaterialTagResult
+from app.abilities.base import MaterialCardResult
+from app.abilities.material_identify.card_normalize import (
+    from_payload as card_from_payload,
+    to_payload as card_to_payload,
+)
 from app.db.models import IdentifyCache
 
 logger = logging.getLogger(__name__)
@@ -29,46 +36,12 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def to_payload(tags: list[MaterialTagResult]) -> list[dict[str, Any]]:
-    return [
-        {
-            "material": tag.material,
-            "material_en": tag.material_en,
-            "confidence": tag.confidence,
-            "evidence": tag.evidence,
-            "category": tag.category,
-            "rank": tag.rank,
-        }
-        for tag in tags
-    ]
-
-
-def from_payload(payload: Any) -> list[MaterialTagResult]:
-    if not isinstance(payload, list):
-        return []
-    tags: list[MaterialTagResult] = []
-    for index, item in enumerate(payload):
-        if not isinstance(item, dict):
-            continue
-        tags.append(
-            MaterialTagResult(
-                material=str(item.get("material") or ""),
-                material_en=str(item.get("material_en") or ""),
-                confidence=float(item.get("confidence") or 0.0),
-                evidence=str(item.get("evidence") or ""),
-                category=str(item.get("category") or ""),
-                rank=int(item.get("rank") if item.get("rank") is not None else index),
-            )
-        )
-    return tags
-
-
 def lookup(
     db: Session, image_hash: str, model: str
-) -> tuple[list[MaterialTagResult], int]:
-    """查缓存。返回 (tags, 上次消耗的 tokens)；未命中返回 ([], 0)。"""
+) -> tuple[MaterialCardResult | None, int]:
+    """查缓存。返回 (卡片, 上次消耗的 tokens)；未命中返回 (None, 0)。"""
     if not image_hash or not model:
-        return [], 0
+        return None, 0
 
     row = db.execute(
         select(IdentifyCache).where(
@@ -77,33 +50,33 @@ def lookup(
     ).scalar_one_or_none()
 
     if row is None:
-        return [], 0
+        return None, 0
 
-    tags = from_payload(row.payload)
-    if not tags:
+    card = card_from_payload(row.payload)
+    if not card.regions:
         # 缓存内容坏了，删掉让它重新识别
         db.delete(row)
         db.commit()
-        return [], 0
+        return None, 0
 
     row.hits += 1
     row.last_used_at = _now()
     db.commit()
-    return tags, row.total_tokens
+    return card, row.total_tokens
 
 
 def store(
     db: Session,
     image_hash: str,
     model: str,
-    tags: list[MaterialTagResult],
+    card: MaterialCardResult,
     total_tokens: int = 0,
 ) -> None:
     """写缓存（同 key 覆盖）。"""
-    if not image_hash or not model or not tags:
+    if not image_hash or not model or not card.regions:
         return
 
-    payload = to_payload(tags)
+    payload = card_to_payload(card)
     row = db.execute(
         select(IdentifyCache).where(
             IdentifyCache.image_hash == image_hash, IdentifyCache.model == model

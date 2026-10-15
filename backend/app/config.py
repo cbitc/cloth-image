@@ -51,7 +51,10 @@ class Settings(BaseSettings):
     download_max_bytes: int = 15_000_000
 
     # 流水线参数
-    identify_top_k: int = 4
+    # 识别时是否裁「材质小样」（swatch）：生成阶段的保真锚点
+    identify_swatch_enabled: bool = True
+    #: 小样最长边（越大越清晰，落盘与参考注入成本越高）
+    identify_swatch_max_side: int = 768
     material_images_per_tag: int = 3
     design_candidates: int = 3
     # 相同图片 + 相同模型时复用识别结果（省一次 VLM 调用，约 1500 tokens）

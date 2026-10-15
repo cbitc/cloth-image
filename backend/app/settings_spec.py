@@ -50,7 +50,7 @@ ABILITY_SPECS: list[dict[str, Any]] = [
     {
         "ability": "material_identifier",
         "label": "识别服装材质",
-        "signature": "服装图片 → [材质 tag 列表]",
+        "signature": "服装图片 → 材质卡片",
         "options": ["openai_compatible"],
         "hint": "底层走 OpenAI 兼容协议（/chat/completions），可指向任意兼容端点",
         "required": {"openai_compatible": ("base_url", "api_key", "model")},
@@ -78,9 +78,9 @@ ABILITY_SPECS: list[dict[str, Any]] = [
     {
         "ability": "material_search",
         "label": "查找材质图",
-        "signature": "[材质 tag 列表] → [材质图片列表]",
+        "signature": "[检索条件] → [面料参考图列表]",
         "options": ["unsplash"],
-        "hint": "Unsplash 面料特写检索（每个材质 tag 一次请求）；demo 限 50 次/小时",
+        "hint": "Unsplash 面料特写检索（每个面料名一次请求）；demo 限 50 次/小时",
         "required": {"unsplash": ("api_key",)},
         "fields": [
             {
@@ -279,12 +279,20 @@ FIELD_SPECS: list[dict[str, Any]] = [
     *_PROVIDER_FIELDS,
     *_PROVIDER_SPECIFIC_FIELDS,
     {
-        "name": "identify_top_k",
-        "label": "最多输出几个材质候选",
+        "name": "identify_swatch_enabled",
+        "label": "裁取材质小样（swatch）",
+        "group": "识别参数",
+        "type": "bool",
+        "help": "从原图裁一块干净面料小样作为「保真锚点」，生成时据此参考真实质感。",
+    },
+    {
+        "name": "identify_swatch_max_side",
+        "label": "材质小样最长边",
         "group": "识别参数",
         "type": "int",
-        "min": 1,
-        "max": 8,
+        "min": 128,
+        "max": 1536,
+        "help": "小样落盘与后续参考注入的尺寸上限。",
     },
     {
         "name": "vision_max_image_side",

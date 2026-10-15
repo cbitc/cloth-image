@@ -116,7 +116,7 @@ def test_references_are_sent_as_data_urls_and_truncated_to_max_refs() -> None:
         return _ok_response()
 
     materials = [
-        MaterialImageResult(tag=f"材质{i}", image_bytes=_png()) for i in range(6)
+        MaterialImageResult(label=f"材质{i}", image_bytes=_png()) for i in range(6)
     ]
     reference = ReferenceImage(image_bytes=_png())
 
@@ -138,7 +138,7 @@ def test_single_reference_is_sent_as_string_not_list() -> None:
         return _ok_response()
 
     _generator(handler).generate(
-        [MaterialImageResult(tag="棉", image_bytes=_png())], "x", num_candidates=1
+        [MaterialImageResult(label="棉", image_bytes=_png())], "x", num_candidates=1
     )
     assert isinstance(calls[0]["image"], str)
 
@@ -152,13 +152,13 @@ def test_material_only_mode_numbers_refs_from_one() -> None:
         return _ok_response()
 
     results = _generator(handler).generate(
-        [MaterialImageResult(tag="棉", image_bytes=_png())], "x", num_candidates=1
+        [MaterialImageResult(label="棉", image_bytes=_png())], "x", num_candidates=1
     )
 
     assert results[0].used_reference is False
     prompt = calls[0]["prompt"]
     assert "原服装图" not in prompt
-    assert "参考图1 = 识别出的材质图。" in prompt
+    assert "参考图1 = 面料质感参考图。" in prompt
 
 
 def test_used_reference_flag_tracks_the_original_image() -> None:
@@ -166,7 +166,7 @@ def test_used_reference_flag_tracks_the_original_image() -> None:
         return _ok_response()
 
     results = _generator(handler).generate(
-        [MaterialImageResult(tag="棉", image_bytes=_png())],
+        [MaterialImageResult(label="棉", image_bytes=_png())],
         "x",
         ReferenceImage(image_bytes=_png()),
         num_candidates=1,
@@ -186,7 +186,7 @@ def test_localhost_reference_is_skipped() -> None:
     _generator(handler).generate(
         [
             MaterialImageResult(
-                tag="棉", external_url="http://localhost:8000/media/materials/a.png"
+                label="棉", external_url="http://localhost:8000/media/materials/a.png"
             )
         ],
         "x",
@@ -203,7 +203,7 @@ def test_public_reference_url_is_passed_through() -> None:
         return _ok_response()
 
     _generator(handler).generate(
-        [MaterialImageResult(tag="棉", external_url="https://cdn.example.com/m.jpg")],
+        [MaterialImageResult(label="棉", external_url="https://cdn.example.com/m.jpg")],
         "x",
         num_candidates=1,
     )
@@ -220,7 +220,7 @@ def test_localhost_reference_is_reported_as_skipped() -> None:
     generator.generate(
         [
             MaterialImageResult(
-                tag="棉", external_url="http://localhost:8000/media/materials/a.png"
+                label="棉", external_url="http://localhost:8000/media/materials/a.png"
             )
         ],
         "x",
@@ -236,7 +236,7 @@ def test_public_reference_url_records_no_skip() -> None:
 
     generator = _generator(handler)
     generator.generate(
-        [MaterialImageResult(tag="棉", external_url="https://cdn.example.com/m.jpg")],
+        [MaterialImageResult(label="棉", external_url="https://cdn.example.com/m.jpg")],
         "x",
         num_candidates=1,
     )
@@ -250,7 +250,7 @@ def test_truncated_refs_are_reported() -> None:
 
     generator = _generator(handler, max_refs=3)
     materials = [
-        MaterialImageResult(tag=f"材质{i}", image_bytes=_png()) for i in range(6)
+        MaterialImageResult(label=f"材质{i}", image_bytes=_png()) for i in range(6)
     ]
 
     generator.generate(
@@ -269,16 +269,16 @@ def test_prompt_reference_numbering_matches_actual_refs() -> None:
         return _ok_response()
 
     materials = [
-        MaterialImageResult(tag=f"材质{i}", image_bytes=_png()) for i in range(6)
+        MaterialImageResult(label=f"材质{i}", image_bytes=_png()) for i in range(6)
     ]
     _generator(handler, max_refs=3).generate(
         materials, "x", ReferenceImage(image_bytes=_png()), num_candidates=1
     )
 
     assert len(calls[0]["image"]) == 3  # 原服装图 + 2 张材质图
-    assert "参考图2~3 = 识别出的材质图。" in calls[0]["prompt"]
-    assert "材质0、材质1" in calls[0]["prompt"]
-    assert "材质2" not in calls[0]["prompt"]
+    assert "参考图2~3 = 面料质感参考图。" in calls[0]["prompt"]
+    assert "参考图4" not in calls[0]["prompt"]  # 未被送出的参考图不能被声称
+    assert "面料改用上述参考图所示的面料质感" in calls[0]["prompt"]
 
 
 def test_invalid_size_format_rejected_at_construction() -> None:

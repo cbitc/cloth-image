@@ -1,11 +1,22 @@
 """识别结果缓存测试。
 
 缓存的价值：重复用同一张图建任务时，省掉一次 VLM 调用（实测约 1500 tokens）。
+缓存的是卡片的**语义部分**（含各区域的裁剪框），小样字节不缓存 —— 命中后
+由编排器拿原图按框重裁（见下面最后一个用例）。
 """
 
 from __future__ import annotations
 
-from app.abilities.base import Abilities, MaterialTagResult
+from app.abilities.base import (
+    Abilities,
+    ColorInfo,
+    FabricInfo,
+    MaterialCardResult,
+    MaterialRegionResult,
+    OpticalInfo,
+    PatternInfo,
+    RegionConfidence,
+)
 from app.db.models import ClothingImage, IdentifyCache, Task
 from app.db.session import SessionLocal
 from app.tasks import cache
@@ -15,24 +26,43 @@ from fakes import (
     FakeMaterialImageSearchProvider,
 )
 
-TAGS = [
-    MaterialTagResult(
-        material="桑蚕丝",
-        material_en="Mulberry Silk",
-        confidence=0.86,
+
+def _card(material: str = "桑蚕丝", *, regions: int = 1) -> MaterialCardResult:
+    built: list[MaterialRegionResult] = []
+    for index in range(regions):
+        built.append(
+            MaterialRegionResult(
+                region_id="body" if index == 0 else f"region{index}",
+                region_type="身片",
+                color=ColorInfo(
+                    dominant_hex="#2B3A4A",
+                    dominant_name="深灰蓝",
+                    lab=(35.0, -2.0, -12.0),
+                    palette=[
+                        {"hex": "#2B3A4A", "ratio": 0.72},
+                        {"hex": "#C8C2B8", "ratio": 0.28},
+                    ],
+                    distribution="整体均匀",
+                ),
+                pattern=PatternInfo(type="纯色", layout="全身"),
+                optical=OpticalInfo(gloss="哑光", transparency="不透明"),
+                fabric=FabricInfo(
+                    material=material,
+                    material_en="Mulberry Silk",
+                    category="天然纤维",
+                    confidence=0.86,
+                ),
+                confidence=RegionConfidence(color=0.95, pattern=0.9, gloss=0.8),
+                swatch_crop_box=(0.2, 0.2, 0.8, 0.8),
+                swatch_content_type="image/jpeg",
+            )
+        )
+    return MaterialCardResult(
+        category="连衣裙",
+        regions=built,
         evidence="强光泽、细腻垂坠",
-        category="天然纤维",
-        rank=0,
-    ),
-    MaterialTagResult(
-        material="醋酸",
-        material_en="Acetate",
-        confidence=0.61,
-        evidence="光泽强但偏硬",
-        category="再生纤维",
-        rank=1,
-    ),
-]
+        overall_confidence=0.8833,
+    )
 
 
 def _clean(db) -> None:
@@ -42,24 +72,32 @@ def _clean(db) -> None:
 def test_store_then_lookup_roundtrip() -> None:
     with SessionLocal() as db:
         _clean(db)
-        cache.store(db, "hash-a", "qwen3-vl-plus", TAGS, total_tokens=1537)
+        cache.store(db, "hash-a", "qwen3-vl-plus", _card(), total_tokens=1537)
 
-        tags, saved = cache.lookup(db, "hash-a", "qwen3-vl-plus")
+        card, saved = cache.lookup(db, "hash-a", "qwen3-vl-plus")
 
         assert saved == 1537
-        assert [tag.material for tag in tags] == ["桑蚕丝", "醋酸"]
-        assert tags[0].material_en == "Mulberry Silk"
-        assert tags[0].confidence == 0.86
-        assert tags[0].evidence == "强光泽、细腻垂坠"
-        assert tags[0].category == "天然纤维"
-        assert [tag.rank for tag in tags] == [0, 1]
+        assert card is not None
+        assert card.category == "连衣裙"
+        region = card.primary
+        assert region is not None
+        assert region.color.dominant_hex == "#2B3A4A"
+        assert region.color.palette[1]["hex"] == "#C8C2B8"
+        assert region.pattern.type == "纯色"
+        assert region.optical.gloss == "哑光"
+        assert region.fabric.material == "桑蚕丝"
+        assert region.fabric.category == "天然纤维"
+        assert region.confidence.color == 0.95
+        assert region.swatch_crop_box == (0.2, 0.2, 0.8, 0.8)
+        # 小样字节不进缓存（JSON 装不下），命中后由编排器重裁
+        assert region.swatch_bytes is None
 
 
-def test_lookup_miss_returns_empty() -> None:
+def test_lookup_miss_returns_none() -> None:
     with SessionLocal() as db:
         _clean(db)
-        tags, saved = cache.lookup(db, "unknown-hash", "qwen3-vl-plus")
-        assert tags == []
+        card, saved = cache.lookup(db, "unknown-hash", "qwen3-vl-plus")
+        assert card is None
         assert saved == 0
 
 
@@ -67,19 +105,19 @@ def test_model_name_is_part_of_the_key() -> None:
     """换模型后旧缓存不应串味。"""
     with SessionLocal() as db:
         _clean(db)
-        cache.store(db, "hash-b", "qwen3-vl-plus", TAGS, total_tokens=100)
+        cache.store(db, "hash-b", "qwen3-vl-plus", _card(), total_tokens=100)
 
         hit, _ = cache.lookup(db, "hash-b", "qwen3-vl-plus")
         miss, _ = cache.lookup(db, "hash-b", "qwen-image-3.0")
 
-        assert len(hit) == 2
-        assert miss == []
+        assert hit is not None and len(hit.regions) == 1
+        assert miss is None
 
 
 def test_hits_are_counted_and_stats_aggregate() -> None:
     with SessionLocal() as db:
         _clean(db)
-        cache.store(db, "hash-c", "qwen3-vl-plus", TAGS, total_tokens=1000)
+        cache.store(db, "hash-c", "qwen3-vl-plus", _card(), total_tokens=1000)
 
         for _ in range(3):
             cache.lookup(db, "hash-c", "qwen3-vl-plus")
@@ -94,65 +132,75 @@ def test_hits_are_counted_and_stats_aggregate() -> None:
 def test_store_is_idempotent_per_key() -> None:
     with SessionLocal() as db:
         _clean(db)
-        cache.store(db, "hash-d", "qwen3-vl-plus", TAGS, total_tokens=100)
-        cache.store(db, "hash-d", "qwen3-vl-plus", TAGS[:1], total_tokens=200)
+        cache.store(db, "hash-d", "qwen3-vl-plus", _card(regions=2), total_tokens=100)
+        cache.store(db, "hash-d", "qwen3-vl-plus", _card(regions=1), total_tokens=200)
 
         rows = db.query(IdentifyCache).filter_by(image_hash="hash-d").all()
         assert len(rows) == 1  # 同 key 覆盖而非新增
 
-        tags, saved = cache.lookup(db, "hash-d", "qwen3-vl-plus")
-        assert len(tags) == 1
+        card, saved = cache.lookup(db, "hash-d", "qwen3-vl-plus")
+        assert card is not None and len(card.regions) == 1
         assert saved == 200
 
 
 def test_blank_hash_or_model_is_not_cached() -> None:
     with SessionLocal() as db:
         _clean(db)
-        cache.store(db, "", "qwen3-vl-plus", TAGS)
-        cache.store(db, "hash-e", "", TAGS)
+        cache.store(db, "", "qwen3-vl-plus", _card())
+        cache.store(db, "hash-e", "", _card())
+        cache.store(db, "hash-e2", "qwen3-vl-plus", MaterialCardResult())
         assert cache.stats(db)["entries"] == 0
 
 
 def test_clear_can_target_a_single_model() -> None:
     with SessionLocal() as db:
         _clean(db)
-        cache.store(db, "hash-f", "qwen3-vl-plus", TAGS)
-        cache.store(db, "hash-g", "other-model", TAGS)
+        cache.store(db, "hash-f", "qwen3-vl-plus", _card())
+        cache.store(db, "hash-g", "other-model", _card())
 
         removed = cache.clear(db, model="qwen3-vl-plus")
 
         assert removed == 1
-        assert cache.lookup(db, "hash-f", "qwen3-vl-plus")[0] == []
-        assert cache.lookup(db, "hash-g", "other-model")[0] != []
+        assert cache.lookup(db, "hash-f", "qwen3-vl-plus")[0] is None
+        assert cache.lookup(db, "hash-g", "other-model")[0] is not None
 
 
 def test_corrupted_payload_is_dropped() -> None:
+    """旧版缓存存的是 tag 列表，与卡片结构不兼容 → 应当被丢弃而不是当成空卡片。"""
     with SessionLocal() as db:
         _clean(db)
-        cache.store(db, "hash-h", "qwen3-vl-plus", TAGS)
+        cache.store(db, "hash-h", "qwen3-vl-plus", _card())
         row = db.query(IdentifyCache).filter_by(image_hash="hash-h").one()
-        row.payload = ["not-a-dict"]
+        row.payload = [{"material": "桑蚕丝", "confidence": 0.8}]
         db.commit()
 
-        tags, saved = cache.lookup(db, "hash-h", "qwen3-vl-plus")
+        card, saved = cache.lookup(db, "hash-h", "qwen3-vl-plus")
 
-        assert tags == [] and saved == 0
+        assert card is None and saved == 0
         assert db.query(IdentifyCache).filter_by(image_hash="hash-h").count() == 0
 
 
 def test_payload_roundtrip_helpers() -> None:
-    payload = cache.to_payload(TAGS)
-    assert payload[0]["material"] == "桑蚕丝"
-    restored = cache.from_payload(payload)
-    assert [tag.material for tag in restored] == ["桑蚕丝", "醋酸"]
-    assert cache.from_payload("garbage") == []
+    from app.abilities.material_identify.card_normalize import (
+        from_payload,
+        to_payload,
+    )
+
+    payload = to_payload(_card())
+    assert payload["category"] == "连衣裙"
+    assert payload["regions"][0]["fabric"]["material"] == "桑蚕丝"
+    restored = from_payload(payload)
+    assert restored.primary is not None
+    assert restored.primary.fabric.material == "桑蚕丝"
+    assert from_payload("garbage").regions == []
+    assert from_payload({"category": "连衣裙"}).regions == []
 
 
 # --------------------------------------------------------------------------- #
 # 与编排器的集成：同一张图建两个任务，第二次应命中缓存、不再调用模型
 # --------------------------------------------------------------------------- #
 class _CountingIdentifier:
-    """计数用的假识别器：第一次返回真标签，之后只记账。"""
+    """计数用的假识别器：返回一张确定性卡片，并记账调用次数与 token。"""
 
     name = "counting"
     model = "counting-v1"
@@ -167,10 +215,10 @@ class _CountingIdentifier:
         content_type: str = "image/png",
         image_url: str = "",
         context_title: str = "",
-    ) -> list[MaterialTagResult]:
+    ) -> MaterialCardResult:
         self.calls += 1
         self.last_usage = {"total_tokens": 1234}
-        return list(TAGS)
+        return _card()
 
 
 def _make_clothing(db, seed: str) -> ClothingImage:
@@ -228,8 +276,15 @@ def test_second_task_reuses_cache_without_calling_model(monkeypatch) -> None:
         assert first is not None and second is not None
 
         assert stub.calls == 1  # 关键：第二次没有再调模型
-        assert [tag.material for tag in first.material_tags] == ["桑蚕丝", "醋酸"]
-        assert [tag.material for tag in second.material_tags] == ["桑蚕丝", "醋酸"]
+        for task in (first, second):
+            assert task.material_card is not None
+            payload = task.material_card.payload
+            assert payload["regions"][0]["fabric"]["material"] == "桑蚕丝"
+
+        # 缓存命中后小样应由原图重裁并落盘（缓存里只有裁剪框）
+        assert second.material_card is not None
+        assert second.material_card.swatch_url
+        assert second.material_card.swatch_storage_key
 
         messages = [event.message for event in second.events]
         assert any("命中识别缓存" in message for message in messages)

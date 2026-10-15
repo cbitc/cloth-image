@@ -8,7 +8,9 @@ from app.abilities.base import (
     MaterialIdentifier,
     MaterialImageSearchProvider,
 )
+from app.abilities.prompting import build_material_summary
 from app.abilities.registry import get_abilities
+from app.tasks.orchestrator import material_queries
 from app.taxonomy import all_materials, build_material_query, load_taxonomy
 
 
@@ -30,37 +32,58 @@ def test_clothing_search_is_deterministic() -> None:
     assert a[0].image_bytes == b[0].image_bytes  # 同 seed 同图
 
 
-def test_material_identifier_returns_ranked_tags() -> None:
+def test_material_identifier_returns_a_material_card() -> None:
     abilities = get_abilities()
     image = abilities.clothing_search.search(["fake-shop"], "衬衫", 1)[0]
-    tags = abilities.material_identifier.identify(image.image_bytes or b"x")
-    assert 2 <= len(tags) <= 4
-    assert all(t.material in all_materials() for t in tags)
-    assert all(0.0 <= t.confidence <= 1.0 for t in tags)
-    assert all(t.evidence for t in tags)
-    confidences = [t.confidence for t in tags]
-    assert confidences == sorted(confidences, reverse=True)
+    card = abilities.material_identifier.identify(image.image_bytes or b"x")
+
+    region = card.primary
+    assert region is not None
+    assert card.category in {"女装上衣", "连衣裙"}
+    assert region.color.dominant_hex.startswith("#")
+    assert region.color.palette
+    assert region.pattern.type
+    assert region.optical.gloss and region.optical.transparency
+    assert region.fabric.material in all_materials()
+    assert region.behavior.is_default is True  # MVP 期不做物理推断
+    assert region.swatch_bytes  # fake 会真实裁一块小样
+    assert 0.0 <= region.confidence.color <= 1.0
+
     # 同样输入 → 同样输出
     again = abilities.material_identifier.identify(image.image_bytes or b"x")
-    assert [t.material for t in again] == [t.material for t in tags]
+    assert again.primary is not None
+    assert again.primary.fabric.material == region.fabric.material
+    assert again.primary.color.dominant_hex == region.color.dominant_hex
 
 
 def test_material_search_and_design_generation() -> None:
     abilities = get_abilities()
     image = abilities.clothing_search.search(["fake-shop"], "半裙", 1)[0]
-    tags = abilities.material_identifier.identify(image.image_bytes or b"x")
+    card = abilities.material_identifier.identify(image.image_bytes or b"x")
+    queries = material_queries(card)
+    assert queries  # 卡片里的面料名就是检索锚
 
-    materials = abilities.material_search.search(tags, per_tag=2)
-    assert len(materials) == len(tags) * 2
+    materials = abilities.material_search.search(queries, per_tag=2)
+    assert len(materials) == len(queries) * 2
     assert all(m.image_bytes for m in materials)
     assert all(m.similarity > 0 for m in materials)
+    assert {m.label for m in materials} == {q.material for q in queries}
 
     designs = abilities.design_generator.generate(
-        materials, "改成及膝长度", num_candidates=2
+        materials,
+        "改成及膝长度",
+        num_candidates=2,
+        material_summary=build_material_summary(card),
     )
     assert len(designs) == 2
     assert all(d.image_bytes for d in designs)
     assert "及膝长度" in designs[0].prompt
+    assert region_material(card) in designs[0].prompt
+
+
+def region_material(card) -> str:
+    assert card.primary is not None
+    return card.primary.fabric.material
 
 
 def test_taxonomy_entries_are_complete() -> None:

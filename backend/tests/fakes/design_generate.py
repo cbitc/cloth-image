@@ -19,15 +19,16 @@ class FakeDesignGenerator:
         design_idea: str,
         reference: ReferenceImage | None = None,
         num_candidates: int = 3,
+        material_summary: str = "",
     ) -> list[DesignImageResult]:
-        tags = sorted({m.tag for m in material_images if m.tag})
+        labels = sorted({m.label for m in material_images if m.label})
         ref_digest = ""
         if reference is not None:
             payload = reference.image_bytes or reference.external_url.encode("utf-8")
             ref_digest = hashlib.sha256(payload or b"").hexdigest()[:12]
 
         prompt = build_design_prompt(
-            material_tags=tags,
+            material_summary=material_summary,
             material_images_count=len(material_images),
             design_idea=design_idea,
             has_reference=reference is not None,
@@ -35,7 +36,7 @@ class FakeDesignGenerator:
 
         results: list[DesignImageResult] = []
         for i in range(max(1, num_candidates)):
-            seed_str = f"design|{design_idea}|{'|'.join(tags)}|{ref_digest}|{i}"
+            seed_str = f"design|{design_idea}|{'|'.join(labels)}|{ref_digest}|{i}"
             data = make_image(
                 seed=seed_str,
                 label=f"DESIGN {i + 1:02d}",

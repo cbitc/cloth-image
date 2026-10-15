@@ -58,12 +58,14 @@ async def stream_task_events(task_id: str, request: Request) -> StreamingRespons
                     stmt = stmt.where(TaskEvent.created_at > last_event_at)
                 events = db.execute(stmt).scalars().all()
 
+                card = task.material_card
                 marker = (
                     task.status,
                     task.updated_at,
                     len(task.material_images),
                     len(task.design_images),
-                    len(task.material_tags),
+                    card.updated_at if card is not None else None,
+                    card.source if card is not None else "",
                 )
 
                 payload: TaskDetail | None = None

@@ -86,7 +86,7 @@ export default function TasksPage() {
   async function handleBulkDelete(ids: string[], label: string) {
     if (ids.length === 0 || busy) return;
     const ok = window.confirm(
-      `确认删除 ${ids.length} 个任务（${label}）？\n任务下的材质 tag、面料图与设计图会一并删除，且不可恢复。`,
+      `确认删除 ${ids.length} 个任务（${label}）？\n任务下的材质卡片、面料图与设计图会一并删除，且不可恢复。`,
     );
     if (!ok) return;
 
@@ -205,8 +205,8 @@ export default function TasksPage() {
                         {task.clothing_image.title || task.id.slice(0, 8)}
                       </p>
                       <p className="text-[11px] text-slate-500">
-                        材质 {task.tag_count} · 面料 {task.material_image_count} · 设计图{" "}
-                        {task.design_image_count}
+                        材质卡片 {task.has_material_card ? "✓" : "—"} · 面料{" "}
+                        {task.material_image_count} · 设计图 {task.design_image_count}
                       </p>
                     </div>
                   </div>

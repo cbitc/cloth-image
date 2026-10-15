@@ -218,6 +218,7 @@ class ComfyUIImageGenerator:
         design_idea: str,
         reference: ReferenceImage | None = None,
         num_candidates: int = 3,
+        material_summary: str = "",
     ) -> list[DesignImageResult]:
         if self._config_error:
             raise ProviderError(self._config_error, provider=self._provider)
@@ -228,22 +229,17 @@ class ComfyUIImageGenerator:
         # 候选材质图可达十几个，但参考图上限只有 max_refs 张，
         # 按候选数写 prompt 会声称存在并不存在的「参考图N」。
         if self.uses_references:
-            payloads, material_tags = self._select_reference_payloads(
-                material_images, reference
-            )
+            payloads, _ = self._select_reference_payloads(material_images, reference)
             has_reference = any(label == "原服装图" for _, label in payloads)
             material_ref_count = len(payloads) - (1 if has_reference else 0)
-            if not material_tags:  # 材质图一张都没用上 → 退回纯文字要求
-                material_tags = [m.tag for m in material_images]
         else:
-            # 文生图预设（z_image_turbo）不吃参考图：材质只能作为文字提示
+            # 文生图预设（z_image_turbo）不吃参考图：材质只能作为文字要求
             payloads = []
-            material_tags = [m.tag for m in material_images]
             has_reference = False
             material_ref_count = 0
 
         prompt = build_design_prompt(
-            material_tags=material_tags,
+            material_summary=material_summary,
             material_images_count=material_ref_count,
             design_idea=design_idea,
             has_reference=has_reference,
@@ -357,18 +353,18 @@ class ComfyUIImageGenerator:
     def _pick_material_refs(
         material_images: list[MaterialImageResult],
     ) -> list[MaterialImageResult]:
-        """每个材质 tag 只留相似度最高的一张，再按相似度降序。
+        """每个材质标签只留相似度最高的一张，再按相似度降序。
 
-        与 openai_compatible_image 的取舍一致：否则同一个 tag 的多张图会占满
+        与 openai_compatible_image 的取舍一致：否则同一个标签的多张图会占满
         有限的参考位，其它材质反而进不来。
         """
-        best_per_tag: dict[str, MaterialImageResult] = {}
+        best_per_label: dict[str, MaterialImageResult] = {}
         for image in material_images:
-            current = best_per_tag.get(image.tag)
+            current = best_per_label.get(image.label)
             if current is None or image.similarity > current.similarity:
-                best_per_tag[image.tag] = image
+                best_per_label[image.label] = image
         return sorted(
-            best_per_tag.values(), key=lambda item: item.similarity, reverse=True
+            best_per_label.values(), key=lambda item: item.similarity, reverse=True
         )
 
     def _select_reference_payloads(
@@ -376,16 +372,16 @@ class ComfyUIImageGenerator:
         material_images: list[MaterialImageResult],
         reference: ReferenceImage | None,
     ) -> tuple[list[tuple[bytes, str]], list[str]]:
-        """挑出**实际可用**的参考图，返回 (待上传项, 入选的材质 tag)。
+        """挑出**实际可用**的参考图，返回 (待上传项, 入选的材质标签)。
 
-        与「上传」分离，是为了在组装 prompt 时就知道真实的参考图张数/材质 ——
+        与「上传」分离，是为了在组装 prompt 时就知道真实的参考图张数 ——
         否则 prompt 会声称存在并不存在的「参考图N」（候选数远大于实际上限）。
 
         任何被丢弃的参考图（无字节 / 超出上限）都记进 `last_skipped_refs`，
         由编排器转成任务事件 —— 否则用户只看到「成功」，材质参考其实没生效。
         """
         payloads: list[tuple[bytes, str]] = []
-        material_tags: list[str] = []
+        material_labels: list[str] = []
         has_garment = False
 
         if reference is not None:
@@ -400,12 +396,12 @@ class ComfyUIImageGenerator:
 
         for image in self._pick_material_refs(material_images):
             if image.image_bytes:
-                payloads.append((image.image_bytes, f"材质图({image.tag})"))
-                material_tags.append(image.tag)
+                payloads.append((image.image_bytes, f"材质图({image.label})"))
+                material_labels.append(image.label)
             else:
-                logger.warning("材质图 %s 没有字节，已跳过", image.tag)
+                logger.warning("材质图 %s 没有字节，已跳过", image.label)
                 self.last_skipped_refs.append(
-                    f"材质图({image.tag})（无本地字节，ComfyUI 无法读取外链）"
+                    f"材质图({image.label})（无本地字节，ComfyUI 无法读取外链）"
                 )
 
         if len(payloads) > self.max_refs:
@@ -419,10 +415,12 @@ class ComfyUIImageGenerator:
                 for _, label in payloads[self.max_refs :]
             )
             payloads = payloads[: self.max_refs]
-            # 被截断的材质图不能再出现在 prompt 里
-            material_tags = material_tags[: len(payloads) - (1 if has_garment else 0)]
+            # 被截断的材质图不能再出现在结果里
+            material_labels = material_labels[
+                : len(payloads) - (1 if has_garment else 0)
+            ]
 
-        return payloads, material_tags
+        return payloads, material_labels
 
     def _upload(self, data: bytes, label: str) -> str:
         digest = hashlib.sha256(data).hexdigest()[:16]

@@ -1,7 +1,11 @@
-"""OpenAI 兼容协议的视觉语言模型（VLM）材质识别。
+"""OpenAI 兼容协议的视觉语言模型（VLM）材质识别 —— 输出「材质卡片」。
 
 同一份代码可指向：阿里云 MaaS（`qwen3-vl-plus`）、OpenAI 官方（`gpt-4o`）、
 或任何 OpenAI 兼容中转 —— 只需改 `base_url` / `model` / `api_key`。
+
+识别结果不是「材质 tag 列表」，而是 MVP 计划 §3.1 的材质卡片：
+逐区域的 A 层视觉属性（颜色 / 图案 / 光泽）+ B/C 层占位字段 + 逐字段置信度，
+外加一小块「材质小样」（swatch）字节 —— 它是生成阶段的保真锚点。
 
 阿里 MaaS 实测要点：
   - `POST {base}/chat/completions`，content 用标准多模态数组
@@ -16,10 +20,11 @@ import logging
 import re
 from typing import Any
 
-from app.abilities.base import MaterialTagResult
+from app.abilities.base import MaterialCardResult
 from app.abilities.http import ProviderError, RetryingHttpClient
-from app.abilities.image_ops import prepare_vision_image
-from app.taxonomy import load_taxonomy
+from app.abilities.image_ops import DEFAULT_SWATCH_MAX_SIDE, prepare_vision_image
+from app.abilities.material_identify.card_normalize import attach_swatch, normalize_card
+from app.taxonomy import material_labels
 
 logger = logging.getLogger(__name__)
 
@@ -27,32 +32,43 @@ _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
 _JSON_BLOCK_RE = re.compile(r"[\[{].*[\]}]", re.DOTALL)
 
 SYSTEM_PROMPT = """你是一名资深服装面料分析专家。
-分析服装图片，反推其可能的**面料材质**，并给出可能度与判断依据。
+分析服装图片，输出一张结构化的**材质卡片**。
 
 规则：
-1. material 只能从下面给出的受控词表中选择，不得自创、改写或加后缀。
-2. 若为拼接/多层次（主体+袖口+内衬等），分别列出并按可能度降序。
-3. confidence 是 0-1 的可能度。单张图难以区分的相似材质
-   （如桑蚕丝 vs 醋酸 vs 缎面涤纶）不要给过高置信度。
-4. evidence 必须是**视觉依据**：光泽强弱、垂坠感、织纹/纹理、透视度、挺括度，
-   一句话说清"为什么像这个材质"。
-5. 最多输出 {top_k} 个候选。
+1. 只描述你**看得见**的视觉属性，不要编造物理参数。
+2. color.dominant.hex 必须是 6 位十六进制（形如 "#2B3A4A"）；
+   palette 至少 2 项、ratio 之和为 1。
+3. pattern.type 只能是：纯色 / 条纹 / 格纹 / 碎花 / 定位印花。
+4. optical.gloss 只能是：哑光 / 微光 / 缎面 / 金属光；
+   optical.transparency 只能是：不透明 / 半透明 / 透明。
+5. fabric.material 只能从给定受控词表中选，不得自创、改写或加后缀；
+   拿不准时选最接近的一个并降低 confidence。
+6. behavior.weight（轻薄/中等/厚重）与 behavior.drape（挺括/适中/垂坠）为可选，
+   只有看得准才填。
+7. confidence 是 0-1 的置信度，逐字段给出（color / pattern / gloss）。
+   单张图难以区分的相似材质（如桑蚕丝 vs 醋酸 vs 缎面涤纶）不要给过高置信度。
+8. evidence 必须是**视觉依据**：光泽强弱、织纹/纹理、透视度、挺括度，
+   一句话说清"为什么是这个判断"。
+9. swatch_box 是一块**平坦、干净、无褶皱与阴影**的面料区域的归一化坐标
+   [left, top, right, bottom]，取值 0~1；确实找不到合适区域时给 null。
+10. category 只能是：女装上衣 / 连衣裙；判断不了时给最接近的一个。
 
 只输出 JSON，不要解释文字，不要 Markdown 代码块。格式：
-{{"tags":[{{"material":"桑蚕丝","material_en":"Mulberry Silk","confidence":0.82,"evidence":"..."}}]}}"""
+{"category":"连衣裙",
+ "color":{"dominant":{"hex":"#2B3A4A","name":"深灰蓝","lab":[35,-2,-12]},
+          "palette":[{"hex":"#2B3A4A","ratio":0.72},{"hex":"#C8C2B8","ratio":0.28}],
+          "distribution":"整体均匀"},
+ "pattern":{"type":"纯色","scale":null,"direction":null,"layout":"全身"},
+ "optical":{"gloss":"哑光","transparency":"不透明"},
+ "fabric":{"material":"棉","material_en":"Cotton","confidence":0.72},
+ "behavior":{"weight":"中等","drape":"适中"},
+ "confidence":{"color":0.95,"pattern":0.9,"gloss":0.8},
+ "evidence":"表面哑光无反射、织纹细密均匀，垂坠适中，符合棉质平纹特征。",
+ "swatch_box":[0.3,0.4,0.6,0.7]}"""
 
-USER_PROMPT = """分析这张服装图片的面料材质。只能从以下受控词表中选择 material：
-{taxonomy}
-
-按可能度从高到低输出 JSON。"""
-
-
-def _clamp_confidence(value: Any) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    return min(1.0, max(0.0, number))
+USER_PROMPT = """分析这张服装图片，输出材质卡片 JSON。
+fabric.material 只能从以下受控词表中选择（都不像时选最接近的一个）：
+{taxonomy}"""
 
 
 def _extract_json(text: str) -> Any:
@@ -74,7 +90,7 @@ def _extract_json(text: str) -> Any:
 
 
 class OpenAICompatibleVLMIdentifier:
-    name = "maas"
+    name = "openai_compatible"
 
     def __init__(
         self,
@@ -82,7 +98,8 @@ class OpenAICompatibleVLMIdentifier:
         base_url: str,
         model: str = "qwen3-vl-plus",
         *,
-        top_k: int = 4,
+        swatch_enabled: bool = True,
+        swatch_max_side: int = DEFAULT_SWATCH_MAX_SIDE,
         timeout_s: float = 90.0,
         max_retries: int = 3,
         vision_max_side: int = 1568,
@@ -91,7 +108,8 @@ class OpenAICompatibleVLMIdentifier:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.top_k = max(1, top_k)
+        self.swatch_enabled = swatch_enabled
+        self.swatch_max_side = swatch_max_side
         self.vision_max_side = vision_max_side
         #: 最近一次调用的 token 用量，供编排器记录
         self.last_usage: dict[str, Any] | None = None
@@ -100,14 +118,8 @@ class OpenAICompatibleVLMIdentifier:
             provider=f"VLM({model})", timeout_s=timeout_s, max_retries=max_retries
         )
 
-        taxonomy = load_taxonomy()
-        self._by_zh = {item["material"]: item for item in taxonomy}
-        self._by_en = {
-            str(item.get("material_en", "")).lower(): item for item in taxonomy
-        }
-        self._label_list = "、".join(
-            f"{item['material']}({item.get('material_en', '')})" for item in taxonomy
-        )
+        #: 注入 prompt 的受控词表清单（与 taxonomy 单例共享缓存）
+        self._label_list = material_labels()
 
     # ------------------------------------------------------------------ #
     # MaterialIdentifier 协议
@@ -118,7 +130,7 @@ class OpenAICompatibleVLMIdentifier:
         content_type: str = "image/png",
         image_url: str = "",
         context_title: str = "",
-    ) -> list[MaterialTagResult]:
+    ) -> MaterialCardResult:
         image_ref = self._image_reference(image_bytes, image_url)
         payload = self._build_payload(image_ref, context_title)
 
@@ -126,7 +138,9 @@ class OpenAICompatibleVLMIdentifier:
         self.last_usage = response.get("usage") or None
 
         content = self._extract_content(response)
-        return self._normalize(_extract_json(content))
+        card = normalize_card(_extract_json(content))
+        self._attach_swatch(card, image_bytes)
+        return card
 
     # ------------------------------------------------------------------ #
     # 内部
@@ -153,7 +167,7 @@ class OpenAICompatibleVLMIdentifier:
         return {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT.format(top_k=self.top_k)},
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": [
@@ -163,7 +177,7 @@ class OpenAICompatibleVLMIdentifier:
                 },
             ],
             "temperature": 0,
-            "max_tokens": 900,
+            "max_tokens": 1200,
         }
 
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -189,65 +203,10 @@ class OpenAICompatibleVLMIdentifier:
             )
         return content or ""
 
-    def _normalize(self, raw: Any) -> list[MaterialTagResult]:
-        items = raw.get("tags") if isinstance(raw, dict) else raw
-        if isinstance(items, dict):
-            items = [items]
-        if not isinstance(items, list):
-            raise ProviderError(
-                f"模型输出的 JSON 结构不符合预期: {str(raw)[:200]}",
-                provider=f"VLM({self.model})",
-            )
-
-        best: dict[str, MaterialTagResult] = {}
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            raw_name = str(
-                item.get("material") or item.get("material_en") or ""
-            ).strip()
-            if not raw_name:
-                continue
-
-            definition = self._match(raw_name, item.get("material_en"))
-            material = definition["material"] if definition else raw_name
-            if definition is None:
-                logger.warning("材质 tag 不在受控词表内，原样保留: %r", raw_name)
-
-            candidate = MaterialTagResult(
-                material=material,
-                material_en=(definition or {}).get("material_en")
-                or str(item.get("material_en") or ""),
-                confidence=_clamp_confidence(item.get("confidence")),
-                evidence=str(item.get("evidence") or "").strip(),
-                category=(definition or {}).get("category", ""),
-                rank=0,
-            )
-            existing = best.get(material)
-            if existing is None or candidate.confidence > existing.confidence:
-                best[material] = candidate
-
-        ordered = sorted(best.values(), key=lambda tag: tag.confidence, reverse=True)[
-            : self.top_k
-        ]
-        for index, tag in enumerate(ordered):
-            tag.rank = index
-        return ordered
-
-    def _match(self, name: str, material_en: Any = None) -> dict | None:
-        """把模型输出的名字归一化回受控词表条目。"""
-        if name in self._by_zh:
-            return self._by_zh[name]
-
-        for candidate in (name, str(material_en or "")):
-            key = candidate.strip().lower()
-            if key and key in self._by_en:
-                return self._by_en[key]
-
-        # 去掉空白/连字符后再比（"mulberry silk" ≈ "Mulberry-Silk"）
-        compact = re.sub(r"[\s\-_]+", "", name.lower())
-        if compact:
-            for english, definition in self._by_en.items():
-                if re.sub(r"[\s\-_]+", "", english) == compact:
-                    return definition
-        return None
+    def _attach_swatch(
+        self, card: MaterialCardResult, image_bytes: bytes | None
+    ) -> None:
+        """按模型给的框裁出材质小样（细节见 `card_normalize.attach_swatch`）。"""
+        if not self.swatch_enabled:
+            return
+        attach_swatch(card, image_bytes, max_side=self.swatch_max_side)
