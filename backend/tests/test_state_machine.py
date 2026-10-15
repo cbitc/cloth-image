@@ -61,3 +61,18 @@ def test_next_after_material_search() -> None:
 def test_regenerate_allowed_from_done() -> None:
     assert can_transition(TaskStatus.DONE, TaskStatus.GENERATING)
     assert can_transition(TaskStatus.AWAIT_DESIGN_IDEA, TaskStatus.MATERIAL_SEARCH)
+
+
+def test_research_materials_allowed_after_done() -> None:
+    """已完成的任务仍可改检索条件重跑面料检索（回到编辑链）。"""
+    assert can_transition(TaskStatus.DONE, TaskStatus.MATERIAL_SEARCH)
+    assert can_transition(TaskStatus.AWAIT_MATERIAL_SELECT, TaskStatus.MATERIAL_SEARCH)
+
+
+def test_research_materials_rejected_while_busy() -> None:
+    for busy in (
+        TaskStatus.IDENTIFYING,
+        TaskStatus.MATERIAL_SEARCH,
+        TaskStatus.GENERATING,
+    ):
+        assert not can_transition(busy, TaskStatus.MATERIAL_SEARCH)

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { PipelineSteps, StatusBadge } from "@/components/Pipeline";
 import { MaterialCardEditor } from "@/components/MaterialCardEditor";
+import { MaterialSearchCriteria } from "@/components/MaterialSearchCriteria";
 import { ResultGallery } from "@/components/ResultGallery";
 import { SelectableImageGrid } from "@/components/SelectableImageGrid";
 import { Button, Card, EmptyState, ErrorText, SectionTitle, Spinner } from "@/components/ui";
@@ -159,6 +160,8 @@ export default function TaskDetailPage() {
   const inFlight = ["IDENTIFYING", "MATERIAL_SEARCH", "GENERATING", "PENDING"].includes(
     task.status,
   );
+  // 「检索条件」面板：确认阶段已经有完整卡片编辑器，避免两处重复 UI
+  const canReSearch = canEditCard && task.status !== "AWAIT_MATERIAL_CONFIRM";
 
   return (
     <div className="space-y-5 pb-10">
@@ -430,6 +433,25 @@ export default function TaskDetailPage() {
             >
               材质图（面料小样）
             </SectionTitle>
+
+            {canReSearch && card && cardOptions ? (
+              <MaterialSearchCriteria
+                // 卡片一变就重挂载 → 草稿回到识别值（默认继承识别结果）
+                key={`${card.id}:${card.updated_at}`}
+                card={card}
+                options={cardOptions}
+                busy={busy}
+                onSubmit={(patch) =>
+                  run(async () => {
+                    // 先落盘条件，再按新条件重跑检索（两步都是幂等部分更新）
+                    if (Object.keys(patch).length) {
+                      await api.updateMaterialCard(task.id, patch);
+                    }
+                    return api.confirmMaterials(task.id);
+                  })
+                }
+              />
+            ) : null}
 
             {task.status === "MATERIAL_SEARCH" || inFlight ? (
               task.material_images.length === 0 ? (

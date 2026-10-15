@@ -6,6 +6,7 @@
   GET    /api/tasks/{id}                  任务详情
   PUT    /api/tasks/{id}/material-card     编辑材质卡片（局部更新，不推进状态）
   POST   /api/tasks/{id}/confirm-materials ★检查点1：确认卡片 → 触发面料图检索
+                                            （后期阶段也可用它「按调整后的条件重新检索」）
   POST   /api/tasks/{id}/material-images   编辑入口2：上传面料图（进参考图池）
   DELETE /api/tasks/{id}/material-images/{image_id}
   POST   /api/tasks/{id}/select-materials  ★检查点2：挑选面料图
@@ -188,6 +189,8 @@ def confirm_materials(
     """★检查点 1：确认材质卡片 → 按卡片检索面料图。
 
     卡片编辑在 `PUT /material-card`；本接口只做「确认 + 推进」，无请求体。
+    后期阶段（挑选面料图 / 填想法 / 已完成）也允许调用 —— 前端「检索条件」面板
+    改完条件后重跑检索走的就是这里：先 `PUT /material-card` 落盘，再调本接口。
     """
     task = _get_task(db, task_id)
     if task.material_card is None:

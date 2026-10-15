@@ -4,6 +4,9 @@
       ─▶ [AWAIT_MATERIAL_SELECT] ─▶ AWAIT_DESIGN_IDEA ─▶ GENERATING ─▶ DONE
   任意阶段失败 ─▶ FAILED（可 retry 回 PENDING）
 
+到 DONE 之后仍可回到编辑链：改设计想法再生成（DONE → GENERATING），
+或改检索条件后重跑面料检索（DONE → MATERIAL_SEARCH）。
+
 方括号为可选检查点：require_material_selection=True 才停留在 AWAIT_MATERIAL_SELECT；
 auto_generate=True 且已有设计想法时跳过 AWAIT_DESIGN_IDEA。
 """
@@ -34,8 +37,8 @@ TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.FAILED,
     },
     TaskStatus.GENERATING: {TaskStatus.DONE, TaskStatus.FAILED},
-    # DONE 允许再生成（「换一版」/ 编辑链迭代）
-    TaskStatus.DONE: {TaskStatus.GENERATING},
+    # DONE 允许再生成（「换一版」）；也允许改检索条件后重跑面料检索（回到编辑链）
+    TaskStatus.DONE: {TaskStatus.GENERATING, TaskStatus.MATERIAL_SEARCH},
     TaskStatus.FAILED: {TaskStatus.PENDING},
 }
 

@@ -128,6 +128,53 @@ def test_full_pipeline_manual_checkpoints(client, sample_clothing_image_id) -> N
     assert {"identify", "material_search", "generate"} <= stages
 
 
+def test_research_materials_with_adjusted_criteria(
+    client, sample_clothing_image_id
+) -> None:
+    """「检索条件」面板：改完条件后可重新检索 —— 包括已完成（DONE）的任务。
+
+    前端走的是「先 `PUT /material-card` 落盘条件，再调 `confirm-materials` 重跑检索」，
+    这里按同样顺序验证：DONE → MATERIAL_SEARCH → AWAIT_DESIGN_IDEA，且图随锚刷新。
+    """
+    task = _create_task(client, sample_clothing_image_id)
+    task_id = task["id"]
+
+    _confirm(client, task_id)
+    resp = client.post(
+        f"/api/tasks/{task_id}/generate",
+        json={"design_idea": DESIGN_IDEA, "num_candidates": 1},
+    )
+    assert resp.status_code == 200, resp.text
+    assert client.get(f"/api/tasks/{task_id}").json()["status"] == TaskStatus.DONE
+
+    first = client.get(f"/api/tasks/{task_id}").json()["material_images"]
+    assert len(first) == 3
+    old_label = first[0]["label"]
+    assert old_label != "亚麻"
+
+    # 用户在面板里改了面料 / 图案 / 光泽（只传改过的字段）
+    _patch_card(
+        client,
+        task_id,
+        {
+            "region": {
+                "fabric": {"material": "亚麻"},
+                "pattern": {"type": "格纹"},
+                "optical": {"gloss": "哑光"},
+            }
+        },
+    )
+    refreshed = _confirm(client, task_id)
+    assert refreshed["status"] == TaskStatus.AWAIT_DESIGN_IDEA
+
+    detail = client.get(f"/api/tasks/{task_id}").json()
+    assert detail["status"] == TaskStatus.AWAIT_DESIGN_IDEA
+    # 检索锚换成新面料 → 标签随之变化，旧检索结果被替换
+    assert {m["label"] for m in detail["material_images"]} == {"亚麻"}
+    assert len(detail["material_images"]) == 3
+    assert all(m["origin"] == "search" for m in detail["material_images"])
+
+
 def test_pipeline_with_material_selection_checkpoint(
     client, sample_clothing_image_id
 ) -> None:
