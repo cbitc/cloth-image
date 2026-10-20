@@ -78,10 +78,11 @@ class Settings(BaseSettings):
     # 登录 / 许可（entitlement-api-new）
     # ------------------------------------------------------------------ #
     # 只做「登录 + 查询有效许可」，不拦截任何业务接口。
-    entitlement_api_base_url: str = "http://localhost:3001"
+    entitlement_api_base_url: str = "http://localhost:3000"
     entitlement_timeout_s: float = 10.0
     entitlement_product_code: str = "cloth-image"
-    entitlement_edition_code: str = "pro"
+    #: 可选：要求许可证的版本（plan）必须是它；留空 = 不校验
+    entitlement_plan_code: str = ""
     #: 整站共用一个激活槽（Web 端没有可信设备指纹）
     entitlement_machine_id: str = "cloth-image-server"
     #: 与 entitlement-api-new 的 LICENSE_JWT_SECRET 相同，仅用于本地验签
@@ -93,7 +94,7 @@ class Settings(BaseSettings):
     auth_cookie_secure: bool = False
 
     #: 前端来源白名单（逗号分隔）。带 cookie 的跨端口请求不能用 "*"
-    cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    cors_allow_origins: str = "http://localhost:3010,http://127.0.0.1:3010"
 
     @property
     def cors_origin_list(self) -> list[str]:

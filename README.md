@@ -142,10 +142,10 @@ cloth-image/
 
 ```powershell
 .\scripts\setup.ps1   # 安装依赖（后端 venv + 前端 npm）并建库
-.\scripts\dev.ps1     # 启动后端 :8000（热重载）+ 前端 :3000
+.\scripts\dev.ps1     # 启动后端 :8000（热重载）+ 前端 :3010
 ```
 
-- 前端 http://localhost:3000
+- 前端 http://localhost:3010
 - 后端 API 文档 http://localhost:8000/docs
 
 其它脚本：
@@ -207,7 +207,7 @@ npm run dev          # 默认连 http://localhost:8000
 
 ### 6.1 在界面上配置（推荐）
 
-打开 `http://localhost:3000/settings`：
+打开 `http://localhost:3010/settings`：
 
 - **四个能力**各自显式选择实现，且仅当选中真实实现时才展开配置项：
   - 搜索服装图：`unsplash`（Unsplash 图库检索，只需 Access Key）
@@ -355,25 +355,29 @@ POST /api/tasks/{id}/generate
 | 端点 | 行为 |
 |---|---|
 | `POST /api/auth/request-login` | 代理 `POST /auth/request-login`；6 位验证码 5 分钟有效，同一邮箱 5 分钟内只能申请一次（429） |
-| `POST /api/auth/verify-login` | 代理 `POST /auth/verify-login` 拿会话令牌 → 立即 `POST /licensing/licenses/obtain` 换许可证 → 写 `ci_license` cookie；无订阅返回 403 `SUBSCRIPTION_REQUIRED` |
-| `GET /api/auth/me` | **本地验签**许可证（HS256 / `aud=entitlement-client` / `exp` / `product` / `machineId`），不访问 entitlement-api |
+| `POST /api/auth/verify-login` | 代理 `POST /auth/verify-login` 拿会话令牌 → 立即 `POST /licensing/licenses/obtain`（body 只有 `product` + `machineId`，版本由订阅决定）换许可证 → 写 `ci_license` cookie；无订阅返回 403 `SUBSCRIPTION_REQUIRED` |
+| `GET /api/auth/me` | **本地验签**许可证（HS256 / `aud=entitlement-client` / `exp` / `product` / `plan` / `machineId`），不访问 entitlement-api；返回 `{email, product, plan, trial, expires_at}` |
 | `POST /api/auth/logout` | 清除 cookie |
+
+许可证 JWT 的 claims：`sub`（邮箱）、`product`、`plan`（订阅版本）、`trial`、`machineId`、`offline`。
+旧版签发方用 `edition` 而不是 `plan`，校验层已做兼容（两个都认，优先 `plan`）。
 
 配置见 `.env.example` 的「登录 / 许可」一节，关键是：
 
-- `ENTITLEMENT_API_BASE_URL`：entitlement-api-new 地址（它默认端口 3000 与 Next 冲突，建议起在 3001）
+- `ENTITLEMENT_API_BASE_URL`：entitlement-api-new 地址（本项目 .env 指向 `http://127.0.0.1:3000`；前端已改到 3010，3000 可留给它）
 - `ENTITLEMENT_LICENSE_JWT_SECRET`：**与 entitlement-api-new 的 `LICENSE_JWT_SECRET` 完全一致**，只用于验签
-- `ENTITLEMENT_PRODUCT_CODE` / `ENTITLEMENT_EDITION_CODE`：取许可时使用的产品与版本
+- `ENTITLEMENT_PRODUCT_CODE`：取许可时使用的产品 code（**版本由订阅决定，客户端不指定**）
+- `ENTITLEMENT_PLAN_CODE`：可选，要求许可证的版本必须是它；留空 = 不校验
 - `ENTITLEMENT_MACHINE_ID`：整站共用一个激活槽（Web 端没有可信设备指纹）
-- `CORS_ALLOW_ORIGINS`：带 cookie 的跨端口请求不能用 `*`，默认放行 `localhost:3000`
+- `CORS_ALLOW_ORIGINS`：带 cookie 的跨端口请求不能用 `*`，默认放行 `localhost:3010`
 
 本地联调步骤：
 
-1. 启动 entitlement-api-new（`pnpm dev:http`，端口改为 3001），配好 MySQL / Redis 与 `LICENSE_JWT_SECRET`。
+1. 启动 entitlement-api-new（`pnpm dev:http`，默认端口 3000），配好 MySQL / Redis 与 `LICENSE_JWT_SECRET`。
 2. 用管理员会话在 entitlement 侧注册产品 / 版本，并给测试邮箱签发订阅（见其 `docs/` 与 admin 路由）。
 3. 启动本项目，打开 `/login` 走「邮箱 → 验证码」。
-4. **验证码目前不会真的发邮件**：entitlement-api-new 的 `ChallengeIssued` 处理器只写日志，
-   联调阶段请从它的控制台日志里取 6 位码；正式上线前需在其侧接入邮件投递。
+4. entitlement 通过 SMTP（`SMTP_HOST` 等）发送验证码，由它的 timer 进程投递 —— 本地验证时需要
+   `pnpm dev:timer` 一起跑。演示账号 `demo@example.com` 在 seed 里已有 `cloth-image` × `pro` 订阅。
 
 已知取舍（当前阶段刻意不做）：
 

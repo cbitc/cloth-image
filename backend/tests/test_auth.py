@@ -23,25 +23,26 @@ def _license(
     email: str = "a@example.com",
     expires_in: int = 3600,
     product: str = "cloth-image",
+    plan: str | None = "pro",
+    trial: bool = False,
     machine_id: str = "cloth-image-server",
     secret: str = TEST_LICENSE_SECRET,
 ) -> str:
     now = int(time.time())
-    return jwt.encode(
-        {
-            "sub": email,
-            "product": product,
-            "edition": "pro",
-            "machineId": machine_id,
-            "offline": False,
-            "iss": "entitlement-api",
-            "aud": "entitlement-client",
-            "iat": now,
-            "exp": now + expires_in,
-        },
-        secret,
-        algorithm="HS256",
-    )
+    claims: dict[str, object] = {
+        "sub": email,
+        "product": product,
+        "trial": trial,
+        "machineId": machine_id,
+        "offline": False,
+        "iss": "entitlement-api",
+        "aud": "entitlement-client",
+        "iat": now,
+        "exp": now + expires_in,
+    }
+    if plan is not None:
+        claims["plan"] = plan
+    return jwt.encode(claims, secret, algorithm="HS256")
 
 
 def _use_upstream(monkeypatch, handler) -> None:
@@ -105,11 +106,16 @@ def test_verify_login_sets_cookie_and_me_reads_it(client, monkeypatch):
             assert request.headers["authorization"] == "Bearer session-token"
             assert json.loads(request.content) == {
                 "product": "cloth-image",
-                "edition": "pro",
                 "machineId": "cloth-image-server",
             }
             return httpx.Response(
-                200, json={"token": _license(), "expiresAt": _iso(86400)}
+                200,
+                json={
+                    "token": _license(),
+                    "plan": "pro",
+                    "trial": False,
+                    "expiresAt": _iso(86400),
+                },
             )
         raise AssertionError(f"未预期的上游路径：{request.url.path}")
 
@@ -121,7 +127,8 @@ def test_verify_login_sets_cookie_and_me_reads_it(client, monkeypatch):
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["email"] == "a@example.com"
-    assert resp.json()["edition"] == "pro"
+    assert resp.json()["plan"] == "pro"
+    assert resp.json()["trial"] is False
     assert client.cookies.get("ci_license")
 
     me = client.get("/api/auth/me")
@@ -201,6 +208,53 @@ def test_me_rejects_forged_signature(client):
     resp = client.get("/api/auth/me")
 
     assert resp.status_code == 401
+
+
+def test_me_accepts_legacy_edition_claim(client):
+    """旧版签发方用 edition 而不是 plan，仍需可用。"""
+    now = int(time.time())
+    legacy = jwt.encode(
+        {
+            "sub": "a@example.com",
+            "product": "cloth-image",
+            "edition": "pro",
+            "machineId": "cloth-image-server",
+            "offline": False,
+            "iss": "entitlement-api",
+            "aud": "entitlement-client",
+            "iat": now,
+            "exp": now + 3600,
+        },
+        TEST_LICENSE_SECRET,
+        algorithm="HS256",
+    )
+    client.cookies.set("ci_license", legacy)
+
+    resp = client.get("/api/auth/me")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["plan"] == "pro"
+
+
+def test_me_rejects_token_without_plan(client):
+    client.cookies.set("ci_license", _license(plan=None))
+
+    resp = client.get("/api/auth/me")
+
+    assert resp.status_code == 401
+
+
+def test_me_rejects_unexpected_plan_when_configured(client, monkeypatch):
+    from app.config import apply_overrides, get_settings
+
+    apply_overrides({"entitlement_plan_code": "ultimate"})
+    client.cookies.set("ci_license", _license(plan="pro"))
+    try:
+        resp = client.get("/api/auth/me")
+        assert resp.status_code == 401
+    finally:
+        apply_overrides({})
+        get_settings.cache_clear()
 
 
 def test_logout_clears_cookie(client):

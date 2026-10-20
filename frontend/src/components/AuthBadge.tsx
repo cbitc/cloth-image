@@ -35,7 +35,8 @@ export function AuthBadge() {
   return (
     <div className="flex items-center gap-3 text-xs">
       <span className="text-slate-400">
-        {user.email} · 许可至 {formatDate(user.expires_at)}
+        {user.email} · {user.plan}
+        {user.trial ? "（试用）" : ""} · 许可至 {formatDate(user.expires_at)}
       </span>
       <button
         type="button"

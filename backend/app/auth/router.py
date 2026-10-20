@@ -75,7 +75,8 @@ def verify_login(payload: VerifyLoginRequest, response: Response):
     return AuthStatusOut(
         email=claims.email,
         product=claims.product,
-        edition=claims.edition,
+        plan=claims.plan,
+        trial=claims.trial,
         expires_at=claims.expires_at,
     )
 
@@ -98,7 +99,8 @@ def me(request: Request):
     return AuthStatusOut(
         email=claims.email,
         product=claims.product,
-        edition=claims.edition,
+        plan=claims.plan,
+        trial=claims.trial,
         expires_at=claims.expires_at,
     )
 

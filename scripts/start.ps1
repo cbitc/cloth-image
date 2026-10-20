@@ -16,4 +16,4 @@ Start-Process -FilePath "cmd.exe" `
     -ArgumentList "/k", "npm run start" `
     -WorkingDirectory $FrontendDir
 
-Write-Host "后端 http://localhost:8000 ；前端 http://localhost:3000"
+Write-Host "后端 http://localhost:8000 ；前端 http://localhost:3010"

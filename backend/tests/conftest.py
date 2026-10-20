@@ -18,7 +18,6 @@ TEST_LICENSE_SECRET = "test-license-secret-please-change-32+chars"
 os.environ["ENTITLEMENT_API_BASE_URL"] = "http://entitlement.test"
 os.environ["ENTITLEMENT_LICENSE_JWT_SECRET"] = TEST_LICENSE_SECRET
 os.environ["ENTITLEMENT_PRODUCT_CODE"] = "cloth-image"
-os.environ["ENTITLEMENT_EDITION_CODE"] = "pro"
 os.environ["ENTITLEMENT_MACHINE_ID"] = "cloth-image-server"
 
 import pytest  # noqa: E402

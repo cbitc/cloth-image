@@ -337,6 +337,8 @@ class AuthStatusOut(BaseModel):
     authenticated: bool = True
     email: str
     product: str
-    edition: str
+    #: 订阅版本（plan）；旧版签发方用 edition，校验层已做兼容
+    plan: str
+    trial: bool = False
     expires_at: datetime
 

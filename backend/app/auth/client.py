@@ -36,8 +36,6 @@ _ERROR_MAP: dict[tuple[int, str], tuple[int, str, str]] = {
     ),
     (401, "Unauthorized"): (401, "SESSION_EXPIRED", "登录状态已失效，请重新登录"),
     (404, "NoActiveSubscription"): (403, "SUBSCRIPTION_REQUIRED", "当前账号没有有效订阅"),
-    (404, "UnknownEdition"): (404, "UNKNOWN_EDITION", "产品版本不存在"),
-    (409, "EditionUnavailable"): (409, "EDITION_UNAVAILABLE", "该产品版本已下架"),
     (409, "ActivationLimitExceeded"): (409, "ACTIVATION_LIMIT", "授权设备数已达上限"),
 }
 
@@ -125,13 +123,16 @@ class EntitlementClient:
         return token
 
     def obtain_license(self, session_token: str) -> LicenseGrant:
-        """用会话令牌换取许可证；无订阅时抛 403。"""
+        """用会话令牌换取许可证；无订阅时抛 403。
+
+        请求体只有 ``product`` 与 ``machineId``：具体版本（plan）由订阅决定，
+        客户端无法挑选。
+        """
         settings = self._settings
         data = self._post(
             "/licensing/licenses/obtain",
             {
                 "product": settings.entitlement_product_code,
-                "edition": settings.entitlement_edition_code,
                 "machineId": settings.entitlement_machine_id,
             },
             token=session_token,

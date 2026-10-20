@@ -323,6 +323,8 @@ export interface AuthUser {
   authenticated: boolean;
   email: string;
   product: string;
-  edition: string;
+  /** 订阅版本（后端把旧版签发方的 edition 归一到这里） */
+  plan: string;
+  trial: boolean;
   expires_at: string;
 }

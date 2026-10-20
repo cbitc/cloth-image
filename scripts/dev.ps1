@@ -1,4 +1,4 @@
-﻿# 启动开发环境：后端（:8000，热重载）+ 前端（:3000）
+﻿# 启动开发环境：后端（:8000，热重载）+ 前端（:3010）
 . (Join-Path $PSScriptRoot "common.ps1")
 
 if (-not (Test-Path $PythonExe)) {
@@ -14,4 +14,4 @@ Start-Process -FilePath "cmd.exe" `
     -ArgumentList "/k", "npm run dev" `
     -WorkingDirectory $FrontendDir
 
-Write-Host "后端 http://localhost:8000/docs ；前端 http://localhost:3000"
+Write-Host "后端 http://localhost:8000/docs ；前端 http://localhost:3010"
