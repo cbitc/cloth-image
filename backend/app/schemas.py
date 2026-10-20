@@ -311,3 +311,32 @@ class MaterialTagDef(BaseModel):
     gloss: str
     drape: str
     keywords: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# 登录 / 许可（entitlement-api-new）
+# --------------------------------------------------------------------------- #
+class RequestLoginRequest(BaseModel):
+    #: 只做长度约束；格式由 entitlement-api 校验（避免额外引入 email-validator）
+    email: str = Field(min_length=3, max_length=254)
+
+
+class RequestLoginResponse(BaseModel):
+    email: str
+    expires_at: datetime
+
+
+class VerifyLoginRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+    code: str = Field(min_length=6, max_length=6)
+
+
+class AuthStatusOut(BaseModel):
+    """当前登录状态与许可证概要（只读，不含任何令牌）。"""
+
+    authenticated: bool = True
+    email: str
+    product: str
+    edition: str
+    expires_at: datetime
+

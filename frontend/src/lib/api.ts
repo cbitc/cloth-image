@@ -1,4 +1,5 @@
 import type {
+  AuthUser,
   CardOptions,
   ClothingImage,
   CreateTasksResponse,
@@ -16,22 +17,41 @@ import type {
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
 
+/** 后端错误：`code` 用于机器判断（如 SUBSCRIPTION_REQUIRED），`detail` 用于展示。 */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string | undefined,
+    readonly detail: string,
+  ) {
+    super(`${status} ${detail}`);
+    this.name = "ApiError";
+  }
+}
+
+async function toApiError(res: Response): Promise<ApiError> {
+  let detail = res.statusText;
+  let code: string | undefined;
+  try {
+    const body = await res.json();
+    const raw = body?.detail ?? body?.error?.message ?? body;
+    detail = typeof raw === "string" ? raw : JSON.stringify(raw);
+    code = typeof body?.code === "string" ? body.code : body?.error?.type;
+  } catch {
+    /* ignore */
+  }
+  return new ApiError(res.status, code, detail);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
+    // 登录态在 httpOnly cookie 里，跨端口请求必须带凭据
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
     cache: "no-store",
   });
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      detail = body.detail ?? JSON.stringify(body);
-    } catch {
-      /* ignore */
-    }
-    throw new Error(`${res.status} ${detail}`);
-  }
+  if (!res.ok) throw await toApiError(res);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
@@ -39,6 +59,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () =>
     request<{ status: string; abilities: Record<string, string> }>("/api/health"),
+
+  // ---- 登录 / 许可（entitlement-api-new） ----
+  requestLogin: (email: string) =>
+    request<{ email: string; expires_at: string }>("/api/auth/request-login", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+
+  verifyLogin: (email: string, code: string) =>
+    request<AuthUser>("/api/auth/verify-login", {
+      method: "POST",
+      body: JSON.stringify({ email, code }),
+    }),
+
+  /** 查询当前登录状态与有效许可（未登录时抛 401 ApiError） */
+  me: () => request<AuthUser>("/api/auth/me"),
+
+  logout: () => request<void>("/api/auth/logout", { method: "POST" }),
 
   listSites: () =>
     request<{ provider: string; sites: SiteOption[] }>("/api/search/sites"),
@@ -88,17 +126,10 @@ export const api = {
     for (const file of Array.from(files)) form.append("files", file);
     const res = await fetch(`${API_BASE}/api/tasks/${id}/material-images`, {
       method: "POST",
+      credentials: "include",
       body: form,
     });
-    if (!res.ok) {
-      let detail = res.statusText;
-      try {
-        detail = (await res.json()).detail ?? detail;
-      } catch {
-        /* ignore */
-      }
-      throw new Error(`${res.status} ${detail}`);
-    }
+    if (!res.ok) throw await toApiError(res);
     return (await res.json()) as TaskDetail;
   },
 

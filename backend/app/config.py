@@ -19,7 +19,13 @@ _OVERRIDES: dict[str, Any] = {}
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # `.env` 既可能放在仓库根目录（scripts/setup.ps1 生成的位置），也可能放在 backend/
+    # 下（后者优先）。pydantic-settings 的 env_file 是相对**当前工作目录**解析的，而
+    # dev.ps1 用 backend/ 作为工作目录启动 uvicorn —— 不写绝对路径就读不到根目录的 .env。
+    model_config = SettingsConfigDict(
+        env_file=(BACKEND_DIR.parent / ".env", BACKEND_DIR / ".env"),
+        extra="ignore",
+    )
 
     # 数据库：本地 SQLite（零外部依赖）
     database_url: str = "sqlite:///./.data/app.db"
@@ -67,6 +73,31 @@ class Settings(BaseSettings):
     # 是否允许通过 /api/settings 修改配置。
     # 服务目前无鉴权，对外暴露前应设为 false 或先加鉴权。
     settings_write_enabled: bool = True
+
+    # ------------------------------------------------------------------ #
+    # 登录 / 许可（entitlement-api-new）
+    # ------------------------------------------------------------------ #
+    # 只做「登录 + 查询有效许可」，不拦截任何业务接口。
+    entitlement_api_base_url: str = "http://localhost:3001"
+    entitlement_timeout_s: float = 10.0
+    entitlement_product_code: str = "cloth-image"
+    entitlement_edition_code: str = "pro"
+    #: 整站共用一个激活槽（Web 端没有可信设备指纹）
+    entitlement_machine_id: str = "cloth-image-server"
+    #: 与 entitlement-api-new 的 LICENSE_JWT_SECRET 相同，仅用于本地验签
+    entitlement_license_jwt_secret: str = ""
+    entitlement_license_issuer: str = "entitlement-api"
+    entitlement_license_audience: str = "entitlement-client"
+
+    auth_cookie_name: str = "ci_license"
+    auth_cookie_secure: bool = False
+
+    #: 前端来源白名单（逗号分隔）。带 cookie 的跨端口请求不能用 "*"
+    cors_allow_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [item.strip() for item in self.cors_allow_origins.split(",") if item.strip()]
 
 
 @lru_cache

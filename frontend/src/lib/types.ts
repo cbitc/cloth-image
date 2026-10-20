@@ -315,3 +315,14 @@ export interface IdentifyCacheStats {
   saved_tokens: number;
   models: string[];
 }
+
+// --------------------------------------------------------------------------- //
+// 登录 / 许可（与后端 app/schemas.py 的 AuthStatusOut 一致）
+// --------------------------------------------------------------------------- //
+export interface AuthUser {
+  authenticated: boolean;
+  email: string;
+  product: string;
+  edition: string;
+  expires_at: string;
+}

@@ -21,6 +21,7 @@ from app.api import (
     tasks,
     taxonomy,
 )
+from app.auth import router as auth_router
 from app.config import apply_overrides, get_settings
 from app.db import models  # noqa: F401  确保模型注册到 Base.metadata
 from app.db.session import Base, SessionLocal, engine
@@ -63,8 +64,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    # 登录态放在 httpOnly cookie 里，带凭据的跨端口请求不能用 "*"。
+    allow_origins=get_settings().cors_origin_list,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -77,15 +79,26 @@ async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
     `ServerErrorMiddleware` 产生的 500 不经过 `CORSMiddleware`，浏览器因缺少
     `Access-Control-Allow-Origin` 会把错误报成 "Failed to fetch"（而非 500），
     极难排查。这里显式回一个带 CORS 头的 JSON 错误。
+
+    带凭据的请求不允许 `Access-Control-Allow-Origin: *`，因此回显来源白名单里的 Origin。
     """
     logger.exception("未处理异常：%s %s", request.method, request.url.path)
+    headers: dict[str, str] = {}
+    origin = request.headers.get("origin")
+    if origin and origin in get_settings().cors_origin_list:
+        headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+        }
     return JSONResponse(
         status_code=500,
         content={"detail": f"服务器内部错误：{type(exc).__name__}: {exc}"},
-        headers={"Access-Control-Allow-Origin": "*"},
+        headers=headers,
     )
 
 
+app.include_router(auth_router.router)
 app.include_router(search.router)
 app.include_router(tasks.router)
 app.include_router(events.router)

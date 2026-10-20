@@ -13,6 +13,8 @@ dependencies = [
   "pillow>=10.3",
   "pyyaml>=6.0",
   "httpx>=0.27",
+  # 校验 entitlement-api-new 签发的许可证（HS256）
+  "pyjwt>=2.8",
   # 用户上传面料图（multipart/form-data）需要
   "python-multipart>=0.0.9",
 ]

@@ -13,6 +13,14 @@ os.environ["LOCAL_STORAGE_DIR"] = str(_TMP / "objects")
 os.environ["TASK_EXECUTION"] = "sync"
 os.environ["PUBLIC_BASE_URL"] = "http://testserver"
 
+# entitlement-api-new（登录 / 许可）：测试用固定密钥，绝不用于生产
+TEST_LICENSE_SECRET = "test-license-secret-please-change-32+chars"
+os.environ["ENTITLEMENT_API_BASE_URL"] = "http://entitlement.test"
+os.environ["ENTITLEMENT_LICENSE_JWT_SECRET"] = TEST_LICENSE_SECRET
+os.environ["ENTITLEMENT_PRODUCT_CODE"] = "cloth-image"
+os.environ["ENTITLEMENT_EDITION_CODE"] = "pro"
+os.environ["ENTITLEMENT_MACHINE_ID"] = "cloth-image-server"
+
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 

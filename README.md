@@ -120,6 +120,7 @@ cloth-image/
 │     │  └─ design_generate/openai_compatible_image.py
 │     ├─ taxonomy/materials.yaml  # 受控材质词表（60 条，中英双语）
 │     ├─ tasks/                # 状态机 / 编排器 / 分发器 / 持久化 / 序列化 / fetch(下载+镜像)
+│     ├─ auth/                 # ★ 登录 + 许可查询（entitlement-api-new 客户端 / JWT 验签 / 路由）
 │     ├─ tools/probe.py        # 真实 provider 联调探针
 │     └─ api/                  # search / tasks / events(SSE) / taxonomy / media
 │  └─ tests/                   # 能力契约 / 状态机 / 端到端 / 适配器 / fakes（测试用假实现）
@@ -128,8 +129,9 @@ cloth-image/
       ├─ app/page.tsx          # 搜图 + 缩略图墙 + 多选建任务
       ├─ app/tasks/page.tsx    # 任务看板（SSE）
       ├─ app/tasks/[id]/page.tsx  # 任务详情（检查点 + 结果画廊）
+      ├─ app/login/page.tsx    # 邮箱验证码登录 + 许可状态
       ├─ components/           # Pipeline / SelectableImageGrid / MaterialCardEditor / ResultGallery
-      └─ lib/                  # api / types / hooks / taskStatus
+      └─ lib/                  # api / auth / types / hooks / taskStatus
 ```
 
 ---
@@ -261,6 +263,10 @@ npm run dev          # 默认连 http://localhost:8000
 | GET | `/api/settings` | 能力配置：字段清单 + 取值 + 密钥状态 + 能力可用状态 |
 | PUT | `/api/settings` | 部分更新配置（`{"values": {...}}`；值为 `null` 表示删除覆盖） |
 | DELETE | `/api/settings` | 清空全部覆盖，回退到环境变量 / 默认值 |
+| POST | `/api/auth/request-login` | 申请邮箱验证码（`{"email": ...}`，5 分钟内限一次） |
+| POST | `/api/auth/verify-login` | 校验验证码 → 换取许可证 → 写 httpOnly cookie |
+| GET | `/api/auth/me` | 查询当前登录状态与许可有效期（未登录 401） |
+| POST | `/api/auth/logout` | 清除登录 cookie |
 
 ### 7.1 生成设计图时是否参考原服装图
 
@@ -334,6 +340,46 @@ POST /api/tasks/{id}/generate
 - 命中时会在任务事件里写明「命中识别缓存…省约 N tokens」，前端执行日志可见
 - 外链图未下载时算不出哈希，此时不缓存（不影响功能）
 - 缓存内容损坏（如旧版本存的是 tag 列表）会自动丢弃并重新识别
+
+### 7.4 登录与许可（entitlement-api-new）
+
+当前只做两件事：**邮箱验证码登录**、**查询当前账号是否持有有效许可**。
+**不拦截任何业务接口**，任务也不区分归属——检索 / 建任务 / 生图仍按原来的方式调用。
+
+```
+浏览器 ──fetch(credentials:include)──▶ FastAPI /api/auth/*  ──Bearer──▶ entitlement-api-new
+                                          │
+                                          └─ Set-Cookie: ci_license（httpOnly，许可证 JWT）
+```
+
+| 端点 | 行为 |
+|---|---|
+| `POST /api/auth/request-login` | 代理 `POST /auth/request-login`；6 位验证码 5 分钟有效，同一邮箱 5 分钟内只能申请一次（429） |
+| `POST /api/auth/verify-login` | 代理 `POST /auth/verify-login` 拿会话令牌 → 立即 `POST /licensing/licenses/obtain` 换许可证 → 写 `ci_license` cookie；无订阅返回 403 `SUBSCRIPTION_REQUIRED` |
+| `GET /api/auth/me` | **本地验签**许可证（HS256 / `aud=entitlement-client` / `exp` / `product` / `machineId`），不访问 entitlement-api |
+| `POST /api/auth/logout` | 清除 cookie |
+
+配置见 `.env.example` 的「登录 / 许可」一节，关键是：
+
+- `ENTITLEMENT_API_BASE_URL`：entitlement-api-new 地址（它默认端口 3000 与 Next 冲突，建议起在 3001）
+- `ENTITLEMENT_LICENSE_JWT_SECRET`：**与 entitlement-api-new 的 `LICENSE_JWT_SECRET` 完全一致**，只用于验签
+- `ENTITLEMENT_PRODUCT_CODE` / `ENTITLEMENT_EDITION_CODE`：取许可时使用的产品与版本
+- `ENTITLEMENT_MACHINE_ID`：整站共用一个激活槽（Web 端没有可信设备指纹）
+- `CORS_ALLOW_ORIGINS`：带 cookie 的跨端口请求不能用 `*`，默认放行 `localhost:3000`
+
+本地联调步骤：
+
+1. 启动 entitlement-api-new（`pnpm dev:http`，端口改为 3001），配好 MySQL / Redis 与 `LICENSE_JWT_SECRET`。
+2. 用管理员会话在 entitlement 侧注册产品 / 版本，并给测试邮箱签发订阅（见其 `docs/` 与 admin 路由）。
+3. 启动本项目，打开 `/login` 走「邮箱 → 验证码」。
+4. **验证码目前不会真的发邮件**：entitlement-api-new 的 `ChallengeIssued` 处理器只写日志，
+   联调阶段请从它的控制台日志里取 6 位码；正式上线前需在其侧接入邮件投递。
+
+已知取舍（当前阶段刻意不做）：
+
+- 会话令牌只为换许可证，**用完即丢、不落库**；许可证到期（≤24h 或订阅期末）后需重新登录。
+- 不强制鉴权、不做任务归属隔离、不做在线购买；后续要加时再引入 `user_session` 表与
+  `require_license` 依赖即可，现有接口契约不受影响。
 
 ---
 
@@ -449,8 +495,12 @@ UI、校验与告警（`config_warnings`）都会自动跟随 spec，无需改�
    卡片里的 B 层（织法）与 C 层（垂坠/厚薄）本体期未做推断，均为占位默认值。
 5. **配置页无鉴权**：`/api/settings` 可以写入密钥。仅限本机 / 内网使用；
    对外部署前必须补鉴权或设 `SETTINGS_WRITE_ENABLED=false`。
+   （本次接入的登录只用于查询许可，**没有**给设置页或业务接口加权限。）
 6. **密钥不要写进 `.env.example`**：该文件**不在** `.gitignore` 里，会被提交；
    真实密钥只写在本地 `.env`（已忽略）。
+7. **许可只是展示，不是闸门**：`/api/auth/me` 返回的许可状态目前不参与任何接口的准入判断，
+   未登录 / 未订阅仍可调用全部 API。需要「按订阅限制使用」时，再按 README §7.4 的取舍补
+   `require_license` 依赖。
 
 ---
 
